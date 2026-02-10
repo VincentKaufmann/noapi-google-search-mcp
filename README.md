@@ -17,10 +17,17 @@ Works with LM Studio, Claude Desktop, and any MCP-compatible client.
 | JavaScript pages | Renders them (Chromium) | Cannot render JS |
 | Page fetching | Built-in `visit_page` tool | Usually separate |
 
+## Tools
+
+- **`google_search`** — Search Google with structured results (titles, URLs, snippets)
+  - `time_range` — Filter by recency: `past_hour`, `past_day`, `past_week`, `past_month`, `past_year`
+  - `site` — Limit to a domain (e.g. `reddit.com`, `stackoverflow.com`)
+  - `page` — Pagination support (page 1, 2, 3...)
+- **`google_news`** — Search Google News for headlines with source and timestamp
+- **`visit_page`** — Fetch any URL and extract readable text content
+
 ## Features
 
-- **`google_search`** — Search Google and get structured results (titles, URLs, snippets)
-- **`visit_page`** — Fetch any URL and extract readable text content
 - Headless Chromium renders JavaScript-heavy pages
 - Consent banner auto-dismissal
 - Smart content extraction (strips nav, ads, footers)
