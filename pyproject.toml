@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "noapi-google-search-mcp"
-version = "0.1.1"
+version = "0.1.2"
 description = "Google Search for Local LLMs — No API Key Required. MCP server using headless Chromium via Playwright."
 readme = "README.md"
 license = "MIT"
