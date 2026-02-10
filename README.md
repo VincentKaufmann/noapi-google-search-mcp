@@ -15,6 +15,9 @@ Works with LM Studio, Claude Desktop, and any MCP-compatible client.
 | Setup time | `pip install` + go | Create Google Cloud project, enable API, get key, configure CSE |
 | Results quality | Real Google results | Custom Search Engine (different ranking) |
 | JavaScript pages | Renders them (Chromium) | Cannot render JS |
+| Google Maps | Built-in | Not available |
+| Google Weather | Built-in | Not available |
+| Google Finance | Built-in | Not available |
 | Google News | Built-in | Usually not available |
 | Google Scholar | Built-in | Not available |
 | Google Images | Built-in | Separate API needed |
@@ -22,6 +25,44 @@ Works with LM Studio, Claude Desktop, and any MCP-compatible client.
 | Page fetching | Built-in `visit_page` tool | Usually separate |
 
 ## Tools
+
+### `google_maps` — Places Search
+
+Search Google Maps for restaurants, businesses, and places with ratings, addresses, and reviews.
+
+**Parameters:**
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `query` | Place search query (required) | `"pizza near Central Park"` |
+| `num_results` | Number of results (1-10, default 5) | `5` |
+
+---
+
+### `google_weather` — Weather Lookup
+
+Get current weather conditions and forecast for any location worldwide.
+
+**Parameters:**
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `location` | City or location (required) | `"Dubai"`, `"New York"`, `"Tokyo"` |
+
+Returns: temperature (°C/°F), condition, precipitation, humidity, wind, and multi-day forecast.
+
+---
+
+### `google_finance` — Stock & Market Data
+
+Look up stock prices, market data, and company information from Google Finance.
+
+**Parameters:**
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `query` | Stock ticker with exchange or company name (required) | `"AAPL:NASDAQ"`, `"TSLA:NASDAQ"` |
+
+Returns: current price, change, market info, key stats, and company description.
+
+---
 
 ### `google_search` — Web Search
 
@@ -91,17 +132,6 @@ Check Google Trends for topic interest, related topics, and related queries.
 
 ---
 
-### `google_suggest` — Search Suggestions
-
-Get Google autocomplete suggestions for a query. Useful for brainstorming search terms and exploring what people commonly search for.
-
-**Parameters:**
-| Parameter | Description | Example |
-|-----------|-------------|---------|
-| `query` | Query to get suggestions for (required) | `"machine learning"` |
-
----
-
 ### `visit_page` — Page Fetcher
 
 Fetch any URL and extract readable text content. Use after search to read full articles.
@@ -118,6 +148,31 @@ You don't need to teach the LLM anything. MCP automatically exposes all tool nam
 ## Sample Prompts
 
 Here are example prompts you can type into LM Studio or Claude Desktop, and which tool the LLM will use:
+
+### Maps & Places
+| What you type | Tool called | Parameters used |
+|--------------|-------------|-----------------|
+| *"Find Italian restaurants near Times Square"* | `google_maps` | `query` |
+| *"Where are the best coffee shops in Berlin?"* | `google_maps` | `query` |
+| *"Search for hotels in Tokyo"* | `google_maps` | `query` |
+| *"Find EV charging stations in San Francisco"* | `google_maps` | `query` |
+| *"What are the top-rated gyms in London?"* | `google_maps` | `query` |
+
+### Weather
+| What you type | Tool called |
+|--------------|-------------|
+| *"What's the weather in Dubai?"* | `google_weather` |
+| *"Is it going to rain in London today?"* | `google_weather` |
+| *"What's the temperature in New York?"* | `google_weather` |
+| *"Weather forecast for Tokyo this week"* | `google_weather` |
+
+### Finance & Stocks
+| What you type | Tool called |
+|--------------|-------------|
+| *"What's Apple's stock price?"* | `google_finance` |
+| *"How is Tesla stock doing?"* | `google_finance` |
+| *"Look up NVIDIA market cap"* | `google_finance` |
+| *"How is the S&P 500 doing today?"* | `google_finance` |
 
 ### Web Search
 | What you type | Tool called | Parameters used |
@@ -157,12 +212,6 @@ Here are example prompts you can type into LM Studio or Claude Desktop, and whic
 |--------------|-------------|
 | *"What's trending in tech right now?"* | `google_trends` |
 | *"Is Python more popular than JavaScript?"* | `google_trends` |
-
-### Suggestions
-| What you type | Tool called |
-|--------------|-------------|
-| *"What do people commonly search for about Python?"* | `google_suggest` |
-| *"Help me brainstorm better search terms for climate data"* | `google_suggest` |
 
 ### Page Reading
 | What you type | Tool called |

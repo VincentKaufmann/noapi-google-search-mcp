@@ -1,6 +1,6 @@
 """Google Search MCP Server - Search Google and fetch pages via MCP."""
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 
 from .server import mcp
 

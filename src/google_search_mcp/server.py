@@ -10,11 +10,12 @@ Tools provided:
     - google_scholar: Search Google Scholar for academic papers
     - google_images: Search Google Images for image URLs
     - google_trends: Check Google Trends for topic interest over time
-    - google_suggest: Get Google autocomplete suggestions for a query
+    - google_maps: Search Google Maps for places, restaurants, businesses
+    - google_finance: Look up stock prices and market data
+    - google_weather: Get current weather and forecasts
     - visit_page: Fetch a URL and return its text content
 """
 
-import json
 import re
 from urllib.parse import quote_plus
 
@@ -675,98 +676,485 @@ async def google_trends(query: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# google_suggest
+# google_maps
 # ---------------------------------------------------------------------------
 
-async def _do_google_suggest(query: str) -> str:
-    """Fetch Google autocomplete suggestions by triggering Google's search box."""
+async def _do_google_maps(query: str, num_results: int = 5) -> str:
+    """Search Google for places using the local pack results."""
     encoded_query = quote_plus(query)
+    # Use Google Search which shows a local pack for place queries
+    url = f"https://www.google.com/search?q={encoded_query}&hl=en"
 
     async with async_playwright() as pw:
         browser, context = await _launch_browser(pw)
         page = await context.new_page()
 
         try:
-            # Go to Google and type in the search box to trigger autocomplete
-            await page.goto("https://www.google.com/?hl=en", wait_until="domcontentloaded", timeout=30000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
             await _dismiss_consent(page)
+            await page.wait_for_timeout(3000)
 
-            # Find the search input and type the query
-            search_input = page.locator('textarea[name="q"], input[name="q"]')
-            await search_input.click()
-            await search_input.fill(query)
-            await page.wait_for_timeout(1500)
-
-            # Extract autocomplete suggestions
-            suggestions = await page.evaluate(
+            results = await page.evaluate(
                 """
-                () => {
-                    const suggestions = [];
-                    // Google autocomplete suggestions appear in various containers
-                    const items = document.querySelectorAll(
-                        'ul[role="listbox"] li .wM6W7d, '
-                        + 'ul[role="listbox"] li .sbl1, '
-                        + 'ul[role="listbox"] li .G43f7e, '
-                        + 'ul[role="listbox"] li span b, '
-                        + '.aajZCb .sbct .sbl1, '
-                        + '.erkvQe li .wM6W7d, '
-                        + '.UUbT9 .aajZCb .sbl1'
+                (numResults) => {
+                    const results = [];
+
+                    // Try local pack results (div.VkpGBb or similar)
+                    const localItems = document.querySelectorAll(
+                        '[data-attrid*="local"] .VkpGBb, ' +
+                        '.rllt__details, ' +
+                        '[jscontroller] div[data-index], ' +
+                        '.cXedhc a[data-cid]'
                     );
-                    for (const el of items) {
-                        const text = el.closest('li')?.innerText?.trim() || el.innerText?.trim();
-                        if (text && !suggestions.includes(text)) {
-                            suggestions.push(text);
+
+                    for (const el of localItems) {
+                        if (results.length >= numResults) break;
+
+                        const nameEl = el.querySelector(
+                            '.dbg0pd, .OSrXXb, [role="heading"], .fontHeadlineSmall, span.OSrXXb'
+                        );
+                        const ratingEl = el.querySelector('.yi40Hd, .MW4etd, span[aria-label*="stars"], span[aria-label*="rated"]');
+                        const reviewsEl = el.querySelector('.RDApEe, .UY7F9, span[aria-label*="reviews"]');
+                        const infoEl = el.querySelector('.rllt__details div:nth-child(2), .W4Efsd');
+                        const addressEl = el.querySelector('.rllt__details div:nth-child(3), .lMbq3e');
+
+                        const name = nameEl ? nameEl.innerText.trim() : '';
+                        if (!name) continue;
+
+                        let rating = '';
+                        if (ratingEl) {
+                            rating = ratingEl.innerText.trim() ||
+                                     (ratingEl.getAttribute('aria-label') || '').replace(/[^0-9.]/g, '');
                         }
+
+                        let reviews = '';
+                        if (reviewsEl) {
+                            reviews = reviewsEl.innerText.trim().replace(/[()]/g, '') ||
+                                      (reviewsEl.getAttribute('aria-label') || '').replace(/[^0-9,]/g, '');
+                        }
+
+                        results.push({
+                            name: name,
+                            rating: rating,
+                            reviews: reviews,
+                            category: infoEl ? infoEl.innerText.trim() : '',
+                            address: addressEl ? addressEl.innerText.trim() : '',
+                        });
                     }
 
-                    // Fallback: grab all listbox items
-                    if (suggestions.length === 0) {
-                        const listItems = document.querySelectorAll('ul[role="listbox"] li');
-                        for (const li of listItems) {
-                            const text = li.innerText?.trim();
-                            if (text && text.length > 1 && !suggestions.includes(text)) {
-                                suggestions.push(text);
+                    // Fallback: try to find any place-like results from the page
+                    if (results.length === 0) {
+                        // Look for the map pack container
+                        const mapPack = document.querySelector('.AEprdc, .C8TUKc, [data-attrid="kc:/local:local_pack"]');
+                        if (mapPack) {
+                            const items = mapPack.querySelectorAll('[data-cid], .VkpGBb, div[jsaction]');
+                            for (const item of items) {
+                                if (results.length >= numResults) break;
+                                const text = item.innerText.trim();
+                                if (text && text.length > 3 && text.length < 500) {
+                                    // Parse the text block
+                                    const lines = text.split('\\n').filter(l => l.trim());
+                                    if (lines.length >= 1) {
+                                        results.push({
+                                            name: lines[0],
+                                            rating: '',
+                                            reviews: '',
+                                            category: lines.length > 1 ? lines[1] : '',
+                                            address: lines.length > 2 ? lines[2] : '',
+                                        });
+                                    }
+                                }
                             }
                         }
                     }
 
-                    return suggestions;
+                    // Last resort: get text from any local results section
+                    if (results.length === 0) {
+                        const allText = document.querySelector('.rlfl__tls, .AEprdc, [data-async-type="localPack"]');
+                        if (allText) {
+                            return [{
+                                name: '__raw__',
+                                raw_text: allText.innerText.substring(0, 2000),
+                                rating: '', reviews: '', category: '', address: ''
+                            }];
+                        }
+                    }
+
+                    return results;
                 }
-                """
+                """,
+                num_results,
             )
 
-            if not suggestions:
-                return f"No suggestions found for: {query}"
+            # Deduplicate by name
+            seen_names = set()
+            deduped = []
+            for r in results:
+                if r.get("name") not in seen_names:
+                    seen_names.add(r.get("name"))
+                    deduped.append(r)
+            results = deduped
 
-            lines = [f"Google Suggestions for: {query}\n"]
-            for i, s in enumerate(suggestions[:10], 1):
-                lines.append(f"  {i}. {s}")
+            if not results:
+                return f"No map results found for: {query}"
+
+            # Handle raw text fallback
+            if len(results) == 1 and results[0].get("name") == "__raw__":
+                raw = results[0].get("raw_text", "")
+                return f"Google Maps Results for: {query}\n\n{raw}"
+
+            lines = [f"Google Maps Results for: {query}\n"]
+            for i, r in enumerate(results[:num_results], 1):
+                lines.append(f"{i}. {r['name']}")
+                if r.get("rating"):
+                    rating_str = f"   Rating: {r['rating']}"
+                    if r.get("reviews"):
+                        rating_str += f" ({r['reviews']} reviews)"
+                    lines.append(rating_str)
+                if r.get("category"):
+                    lines.append(f"   Type: {r['category']}")
+                if r.get("address"):
+                    lines.append(f"   Address: {r['address']}")
+                lines.append("")
 
             return "\n".join(lines)
 
         except Exception as e:
-            return f"Suggestions lookup failed: {e}"
+            return f"Maps search failed: {e}"
 
         finally:
             await browser.close()
 
 
 @mcp.tool()
-async def google_suggest(query: str) -> str:
-    """Get Google autocomplete suggestions for a query. Only use this when the user explicitly asks for search suggestions, related searches, or wants to explore what people commonly search for. Do NOT use this for regular searches — use google_search instead.
+async def google_maps(query: str, num_results: int = 5) -> str:
+    """Search Google Maps for places, restaurants, businesses, and locations with ratings and addresses.
 
-    Sample prompts that trigger this tool (user must explicitly ask for suggestions):
-        - "What do people commonly search for about Python?"
-        - "Give me search suggestions for machine learning"
-        - "What are popular searches related to home automation?"
-        - "Help me brainstorm better search terms for climate data"
-
-    Do NOT use this tool when the user simply wants search results. Use google_search for that.
+    Sample prompts that trigger this tool:
+        - "Find Italian restaurants near Times Square"
+        - "Where are the best coffee shops in Berlin?"
+        - "Search for hotels in Tokyo"
+        - "Find EV charging stations in San Francisco"
+        - "What are the top-rated gyms in London?"
 
     Args:
-        query: The partial or full query to get suggestions for.
+        query: The place search query (e.g. "pizza near Central Park", "hotels in Paris").
+        num_results: Number of results to return (default 5, max 10).
     """
-    return await _do_google_suggest(query)
+    num_results = max(1, min(num_results, 10))
+    return await _do_google_maps(query, num_results)
+
+
+# ---------------------------------------------------------------------------
+# google_finance
+# ---------------------------------------------------------------------------
+
+async def _do_google_finance(query: str) -> str:
+    """Search Google Finance for stock/market data."""
+    encoded_query = quote_plus(query)
+    url = f"https://www.google.com/finance/quote/{encoded_query}"
+
+    async with async_playwright() as pw:
+        browser, context = await _launch_browser(pw)
+        page = await context.new_page()
+
+        try:
+            # First try direct quote URL
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            await _dismiss_consent(page)
+            await page.wait_for_timeout(2000)
+
+            data = await page.evaluate(
+                """
+                () => {
+                    const data = {};
+
+                    // Price — use data attribute (most reliable)
+                    const dataEl = document.querySelector('[data-last-price]');
+                    if (dataEl) {
+                        data.price = dataEl.getAttribute('data-last-price');
+                    }
+
+                    // Currency and exchange from data attributes
+                    const currencyEl = document.querySelector('[data-currency-code]');
+                    data.currency = currencyEl ? currencyEl.getAttribute('data-currency-code') : 'USD';
+
+                    const exchangeEl = document.querySelector('[data-exchange]');
+                    data.exchange = exchangeEl ? exchangeEl.getAttribute('data-exchange') : '';
+
+                    // Displayed price with currency symbol
+                    const displayEl = document.querySelector('.fxKbKc, .kf1m0');
+                    data.display_price = displayEl ? displayEl.innerText.trim() : '';
+
+                    // Change percentage and absolute
+                    const rPF6Lc = document.querySelector('.rPF6Lc');
+                    if (rPF6Lc) {
+                        const text = rPF6Lc.innerText.trim();
+                        const lines = text.split('\\n');
+                        if (lines.length >= 2) {
+                            data.change_pct = lines[1] ? lines[1].trim() : '';
+                            data.change_abs = lines[2] ? lines[2].trim() : '';
+                        }
+                    }
+
+                    // Company name
+                    const nameEl = document.querySelector('.zzDege');
+                    data.name = nameEl ? nameEl.innerText.trim() : '';
+
+                    // Key stats — use first line only (labels include tooltip descriptions)
+                    const stats = {};
+                    const statRows = document.querySelectorAll('.gyFHrc .P6K39c, .eYanAe .P6K39c, table.slpEwd tr');
+                    for (const row of statRows) {
+                        const label = row.querySelector('.mfs7Fc, td:first-child');
+                        const value = row.querySelector('.QXDnM, td:last-child');
+                        if (label && value) {
+                            const k = label.innerText.trim().split('\\n')[0];
+                            const v = value.innerText.trim().split('\\n')[0];
+                            if (k && v) stats[k] = v;
+                        }
+                    }
+                    data.stats = stats;
+
+                    // About/description
+                    const aboutEl = document.querySelector('.bLLb2d, .Yfwt5');
+                    data.about = aboutEl ? aboutEl.innerText.trim().substring(0, 500) : '';
+
+                    return data;
+                }
+                """
+            )
+
+            if not data.get("price") and not data.get("name"):
+                # Fallback: try Google search for finance info
+                search_url = f"https://www.google.com/search?q={encoded_query}+stock+price&hl=en"
+                await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
+                await page.wait_for_timeout(2000)
+
+                data = await page.evaluate(
+                    """
+                    () => {
+                        const data = {};
+                        const priceEl = document.querySelector('[data-attrid*="Price"], .YMlKec, .kCrYT .IsqQVc');
+                        data.price = priceEl ? priceEl.innerText.trim() : '';
+
+                        const nameEl = document.querySelector('.oPhL2e .PZPZlf, [data-attrid*="title"]');
+                        data.name = nameEl ? nameEl.innerText.trim() : '';
+
+                        const changeEl = document.querySelector('[data-attrid*="change"], .JwB6zf');
+                        data.change = changeEl ? changeEl.innerText.trim() : '';
+
+                        // Get the knowledge panel text as fallback
+                        const panel = document.querySelector('.kp-wholepage, .knowledge-panel');
+                        data.panel_text = panel ? panel.innerText.substring(0, 1500) : '';
+
+                        return data;
+                    }
+                    """
+                )
+
+            lines = [f"Google Finance: {query}\n"]
+
+            if data.get("name"):
+                lines.append(f"Company: {data['name']}")
+            if data.get("display_price"):
+                lines.append(f"Price: {data['display_price']}")
+            elif data.get("price"):
+                currency = data.get("currency", "USD")
+                lines.append(f"Price: {data['price']} {currency}")
+            if data.get("exchange"):
+                lines.append(f"Exchange: {data['exchange']}")
+            if data.get("change_pct") or data.get("change_abs"):
+                change_parts = []
+                if data.get("change_abs"):
+                    change_parts.append(data["change_abs"])
+                if data.get("change_pct"):
+                    change_parts.append(f"({data['change_pct']})")
+                lines.append(f"Change: {' '.join(change_parts)}")
+            if data.get("stats"):
+                lines.append("\nKey Stats:")
+                for k, v in data["stats"].items():
+                    lines.append(f"  {k}: {v}")
+
+            if data.get("about"):
+                lines.append(f"\nAbout: {data['about']}")
+
+            if not data.get("price"):
+                lines.append("Could not find financial data. Try a stock ticker like 'AAPL:NASDAQ' or 'TSLA:NASDAQ'.")
+
+            return "\n".join(lines)
+
+        except Exception as e:
+            return f"Finance lookup failed: {e}"
+
+        finally:
+            await browser.close()
+
+
+@mcp.tool()
+async def google_finance(query: str) -> str:
+    """Look up stock prices, market data, and company information on Google Finance.
+
+    Sample prompts that trigger this tool:
+        - "What's Apple's stock price?"
+        - "How is Tesla stock doing?"
+        - "Look up NVIDIA market cap"
+        - "Get me the stock price for Microsoft"
+        - "How is the S&P 500 doing today?"
+
+    Args:
+        query: Stock ticker with exchange (e.g. "AAPL:NASDAQ", "TSLA:NASDAQ", "MSFT:NASDAQ", ".INX:INDEXSP") or company name.
+    """
+    return await _do_google_finance(query)
+
+
+# ---------------------------------------------------------------------------
+# google_weather
+# ---------------------------------------------------------------------------
+
+async def _do_google_weather(location: str) -> str:
+    """Get weather data from Google's weather card."""
+    encoded_location = quote_plus(f"weather {location}")
+    url = f"https://www.google.com/search?q={encoded_location}&hl=en"
+
+    async with async_playwright() as pw:
+        browser, context = await _launch_browser(pw)
+        page = await context.new_page()
+
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            await _dismiss_consent(page)
+            await page.wait_for_timeout(2000)
+
+            data = await page.evaluate(
+                """
+                () => {
+                    const data = {};
+
+                    // Location
+                    const locEl = document.querySelector('#wob_loc');
+                    data.location = locEl ? locEl.innerText.trim() : '';
+
+                    // Current temperature
+                    const tempEl = document.querySelector('#wob_tm');
+                    data.temp_c = tempEl ? tempEl.innerText.trim() : '';
+
+                    const tempFEl = document.querySelector('#wob_ttm');
+                    data.temp_f = tempFEl ? tempFEl.innerText.trim() : '';
+
+                    // Condition (e.g. "Sunny", "Partly cloudy")
+                    const condEl = document.querySelector('#wob_dc');
+                    data.condition = condEl ? condEl.innerText.trim() : '';
+
+                    // Precipitation
+                    const precipEl = document.querySelector('#wob_pp');
+                    data.precipitation = precipEl ? precipEl.innerText.trim() : '';
+
+                    // Humidity
+                    const humidEl = document.querySelector('#wob_hm');
+                    data.humidity = humidEl ? humidEl.innerText.trim() : '';
+
+                    // Wind
+                    const windEl = document.querySelector('#wob_ws');
+                    data.wind = windEl ? windEl.innerText.trim() : '';
+
+                    // Day/time
+                    const timeEl = document.querySelector('#wob_dts');
+                    data.time = timeEl ? timeEl.innerText.trim() : '';
+
+                    // Forecast days
+                    data.forecast = [];
+                    const forecastDays = document.querySelectorAll('.wob_df');
+                    for (const day of forecastDays) {
+                        const dayName = day.querySelector('.Z1VzSb, .QrNVmd');
+                        const highEl = day.querySelector('.wob_t:first-of-type .wob_t');
+                        const lowEl = day.querySelector('.wob_t:last-of-type .wob_t');
+                        const iconEl = day.querySelector('img');
+
+                        // Get high and low from the spans
+                        const temps = day.querySelectorAll('.wob_t span:first-child');
+                        let high = '', low = '';
+                        if (temps.length >= 2) {
+                            high = temps[0].innerText.trim();
+                            low = temps[1].innerText.trim();
+                        }
+
+                        if (dayName) {
+                            data.forecast.push({
+                                day: dayName.innerText.trim(),
+                                high: high,
+                                low: low,
+                                condition: iconEl ? iconEl.alt || '' : ''
+                            });
+                        }
+                    }
+
+                    return data;
+                }
+                """
+            )
+
+            if not data.get("temp_c") and not data.get("location"):
+                return f"Could not find weather data for: {location}"
+
+            # Use the provided location name if Google's #wob_loc is generic
+            display_location = data.get("location", location)
+            if not display_location or display_location.lower() in ("weather", ""):
+                display_location = location
+
+            lines = [f"Weather for: {display_location}\n"]
+
+            if data.get("time"):
+                lines.append(f"As of: {data['time']}")
+
+            if data.get("temp_c"):
+                temp_str = f"Temperature: {data['temp_c']}°C"
+                if data.get("temp_f"):
+                    temp_str += f" ({data['temp_f']}°F)"
+                lines.append(temp_str)
+
+            if data.get("condition"):
+                lines.append(f"Condition: {data['condition']}")
+            if data.get("precipitation"):
+                lines.append(f"Precipitation: {data['precipitation']}")
+            if data.get("humidity"):
+                lines.append(f"Humidity: {data['humidity']}")
+            if data.get("wind"):
+                lines.append(f"Wind: {data['wind']}")
+
+            if data.get("forecast"):
+                lines.append("\nForecast:")
+                for f in data["forecast"][:7]:
+                    day_str = f"  {f['day']}"
+                    if f.get("high") and f.get("low"):
+                        day_str += f": {f['high']}° / {f['low']}°"
+                    if f.get("condition"):
+                        day_str += f" — {f['condition']}"
+                    lines.append(day_str)
+
+            return "\n".join(lines)
+
+        except Exception as e:
+            return f"Weather lookup failed: {e}"
+
+        finally:
+            await browser.close()
+
+
+@mcp.tool()
+async def google_weather(location: str) -> str:
+    """Get current weather conditions and forecast for any location.
+
+    Sample prompts that trigger this tool:
+        - "What's the weather in Dubai?"
+        - "Is it going to rain in London today?"
+        - "What's the temperature in New York?"
+        - "Weather forecast for Tokyo this week"
+        - "How hot is it in Dubai right now?"
+
+    Args:
+        location: The city or location to get weather for (e.g. "Dubai", "New York", "London, UK", "Tokyo").
+    """
+    return await _do_google_weather(location)
 
 
 # ---------------------------------------------------------------------------
