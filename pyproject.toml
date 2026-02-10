@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "google-search-mcp"
+version = "0.1.0"
+description = "MCP server for Google search and page fetching using headless Chromium"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Vincent Kaufmann", email = "vincent@kaufmann.dev" },
+]
+keywords = ["mcp", "google", "search", "playwright", "llm", "ai"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "mcp>=1.0.0",
+    "playwright>=1.40.0",
+]
+
+[project.scripts]
+google-search-mcp = "google_search_mcp:main"
+
+[project.urls]
+Homepage = "https://github.com/VincentKaufmann/google-search-mcp"
+Repository = "https://github.com/VincentKaufmann/google-search-mcp"
+Issues = "https://github.com/VincentKaufmann/google-search-mcp/issues"
