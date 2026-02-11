@@ -2,11 +2,11 @@
 
 vincentkaufmann@protonmail.com
 
-**Give any LLM real Google search, vision, OCR, and video transcription capabilities. No API key, no vision model needed.**
+**Give any LLM real Google search, vision, local OCR, and YouTube video understanding. No API key, no vision model needed.**
 
-**Google Search, Google Lens + OpenCV object detection + local OCR + YouTube transcription & clip extraction for Local LLMs**
+**Google Search, Google Lens + OpenCV object detection + local OCR + YouTube transcription, Q&A & clip extraction for Local LLMs**
 
-An MCP (Model Context Protocol) server that gives your local LLM real Google search, browsing, vision, text-reading, and video understanding abilities. Uses headless Chromium via Playwright for search, Google Lens for image identification, RapidOCR for local text extraction, and faster-whisper for video transcription with timestamps. No Google API key, no Custom Search Engine setup, no usage limits - just real Google results.
+An MCP (Model Context Protocol) server that gives your local LLM real Google search, browsing, vision, text-reading, and full video understanding. Paste a YouTube link and the LLM transcribes it locally with timestamps, answers questions about the content, tells you when topics start and end, and extracts specific segments as video clips. Uses headless Chromium via Playwright for search, Google Lens for image identification, RapidOCR for offline OCR, and faster-whisper for local video transcription. No Google API key, no Custom Search Engine setup, no usage limits - just real Google results.
 
 Works with LM Studio, Claude Desktop, and any MCP-compatible client.
 
