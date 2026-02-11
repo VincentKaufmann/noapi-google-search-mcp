@@ -20,6 +20,7 @@ Tools provided:
     - google_hotels: Search for hotels and accommodation
     - google_lens: Reverse image search to identify objects, products, brands
     - google_lens_detect: Detect objects in image and identify each via Lens
+    - ocr_image: Extract text from images locally using RapidOCR (no internet needed)
     - list_images: List image files in a directory for use with google_lens
     - visit_page: Fetch a URL and return its text content
 """
@@ -2447,6 +2448,95 @@ async def list_images(directory: str = "") -> str:
 
     lines.append(f"\nTo identify an image, use google_lens with the file path above.")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# ocr_image (local OCR using RapidOCR - no internet needed)
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def ocr_image(image_source: str) -> str:
+    """Extract text from an image using local OCR. No internet connection needed.
+
+    Uses RapidOCR (PaddleOCR models on ONNX Runtime) to read text from
+    screenshots, documents, photos of signs, labels, receipts, or any image
+    containing text. Runs entirely locally.
+
+    This gives text-reading capabilities to text-only models without needing
+    a vision model or internet access.
+
+    Sample prompts that trigger this tool:
+        - "Read the text in this image: /path/to/image.jpg"
+        - "OCR this screenshot: /path/to/screenshot.png"
+        - "What does this document say? /path/to/document.jpg"
+        - "Extract text from /path/to/receipt.jpg"
+        - "Read this label: /path/to/photo.jpg"
+
+    Args:
+        image_source: Local file path to the image (e.g. /home/user/photo.jpg).
+    """
+    try:
+        from rapidocr_onnxruntime import RapidOCR
+    except ImportError:
+        return "rapidocr-onnxruntime is required for OCR. Install with: pip install rapidocr-onnxruntime"
+
+    file_path = str(Path(image_source).expanduser().resolve())
+    if not os.path.isfile(file_path):
+        return f"File not found: {image_source}\nPlease provide a valid file path."
+
+    try:
+        engine = RapidOCR()
+        result, elapse = engine(file_path)
+
+        if not result:
+            return f"No text found in image: {image_source}"
+
+        # Sort by vertical position (top to bottom) then left to right
+        # Each result is [bounding_box, text, confidence]
+        sorted_results = sorted(result, key=lambda r: (
+            min(p[1] for p in r[0]),  # min Y of bounding box
+            min(p[0] for p in r[0]),  # min X of bounding box
+        ))
+
+        lines = [f"OCR Results for: {image_source}"]
+        lines.append(f"Text regions found: {len(sorted_results)}")
+        lines.append("")
+
+        # Group text by approximate vertical position into lines
+        text_lines = []
+        current_line_texts = []
+        prev_y = None
+        line_threshold = 15  # pixels threshold for same-line grouping
+
+        for box, text, confidence in sorted_results:
+            min_y = min(p[1] for p in box)
+            if prev_y is not None and abs(min_y - prev_y) > line_threshold:
+                if current_line_texts:
+                    text_lines.append(" ".join(current_line_texts))
+                current_line_texts = []
+            current_line_texts.append(text)
+            prev_y = min_y
+
+        if current_line_texts:
+            text_lines.append(" ".join(current_line_texts))
+
+        lines.append("--- Extracted Text ---")
+        for tl in text_lines:
+            lines.append(tl)
+
+        # Also provide raw results with confidence for detailed analysis
+        lines.append("")
+        lines.append("--- Detailed Results (with confidence) ---")
+        for box, text, confidence in sorted_results:
+            lines.append(f"[{confidence:.0%}] {text}")
+
+        det_time, cls_time, rec_time = elapse
+        lines.append(f"\nProcessing time: detection={det_time:.2f}s, recognition={rec_time:.2f}s")
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        return f"OCR failed: {e}"
 
 
 # ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "noapi-google-search-mcp"
-version = "0.1.7"
+version = "0.1.8"
 description = "Google Search for Local LLMs - No API Key Required. MCP server using headless Chromium via Playwright."
 readme = "README.md"
 license = "MIT"
@@ -28,6 +28,7 @@ dependencies = [
     "mcp>=1.0.0",
     "playwright>=1.40.0",
     "opencv-python-headless>=4.8.0",
+    "rapidocr-onnxruntime>=1.4.0",
 ]
 
 [project.scripts]
