@@ -2,11 +2,11 @@
 
 vincentkaufmann@protonmail.com
 
-**Give any LLM real Google search and vision capabilities. No API key, no vision model needed.**
+**Give any LLM real Google search, vision, and OCR capabilities. No API key, no vision model needed.**
 
-**Google Search, Google Lens + OpenCV object detection for Local LLMs**
+**Google Search, Google Lens + OpenCV object detection + local OCR for Local LLMs**
 
-An MCP (Model Context Protocol) server that gives your local LLM real Google search, browsing, and vision abilities using headless Chromium via Playwright. No Google API key, no Custom Search Engine setup, no usage limits - just real Google results.
+An MCP (Model Context Protocol) server that gives your local LLM real Google search, browsing, vision, and text-reading abilities. Uses headless Chromium via Playwright for search, Google Lens for image identification, and RapidOCR for local text extraction. No Google API key, no Custom Search Engine setup, no usage limits - just real Google results.
 
 Works with LM Studio, Claude Desktop, and any MCP-compatible client.
 
@@ -32,6 +32,8 @@ Works with LM Studio, Claude Desktop, and any MCP-compatible client.
 | Google Books | Built-in | Not available |
 | Google Images | Built-in | Separate API needed |
 | Google Lens | Built-in (reverse image search) | Not available |
+| Object detection | Built-in (OpenCV + Google Lens per object) | Not available |
+| Local OCR | Built-in (RapidOCR, works offline) | Not available |
 | Google Trends | Built-in | Separate API needed |
 | Page fetching | Built-in `visit_page` tool | Usually separate |
 
@@ -223,6 +225,61 @@ Check Google Trends for topic interest, related topics, and related queries.
 
 ---
 
+### `google_lens_detect` - Object Detection + Identification
+
+Detect all objects in an image using OpenCV, crop each one, and identify them individually via Google Lens. Useful when an image contains multiple items and you want each identified separately.
+
+**Parameters:**
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `image_source` | Local file path to the image (required) | `"/home/user/photo.jpg"` |
+
+Returns: per-object identification from Google Lens, including the original full image results.
+
+---
+
+### `ocr_image` - Local OCR (no internet needed)
+
+Extract text from images locally using RapidOCR (PaddleOCR models on ONNX Runtime). Runs entirely offline. Reads screenshots, documents, photos of signs, labels, receipts, or any image containing text.
+
+Gives text-reading capabilities to text-only models without needing a vision model or internet.
+
+**Parameters:**
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `image_source` | Local file path to the image (required) | `"/home/user/screenshot.png"` |
+
+Returns: extracted text sorted by position, with confidence scores.
+
+**Example output:**
+```
+OCR Results for: /home/user/screenshot.png
+Text regions found: 12
+
+--- Extracted Text ---
+NVIDIA-SMI 580.95.05  Driver Version: 580.95.05  CUDA Version: 13.0
+GPU Name  Persistence-M  Bus-Id  Disp.A
+NVIDIA GB10  On  00000000F:01:00.0
+
+--- Detailed Results (with confidence) ---
+[88%] NVIDIA-SMI 580.95.05
+[88%] Driver Version: 580.95.05
+[84%] CUDA Version: 13.0
+```
+
+---
+
+### `list_images` - Image Discovery
+
+List image files in a directory so text-only models can discover and pass them to `google_lens`, `google_lens_detect`, or `ocr_image`. Default directory: `~/lens/`.
+
+**Parameters:**
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `directory` | Folder to scan (optional, default `~/lens/`) | `"/home/user/photos"` |
+
+---
+
 ### `visit_page` - Page Fetcher
 
 Fetch any URL and extract readable text content. Use after search to read full articles.
@@ -350,6 +407,20 @@ Here are example prompts you can type into LM Studio or Claude Desktop, and whic
 |--------------|-------------|
 | *"What's trending in tech right now?"* | `google_trends` |
 | *"Is Python more popular than JavaScript?"* | `google_trends` |
+
+### Object Detection
+| What you type | Tool called |
+|--------------|-------------|
+| *"Detect and identify all objects in /home/user/photo.jpg"* | `google_lens_detect` |
+| *"What are all the items in this photo? /path/to/image.jpg"* | `google_lens_detect` |
+
+### OCR (Text Extraction)
+| What you type | Tool called |
+|--------------|-------------|
+| *"Read the text in this image: /home/user/screenshot.png"* | `ocr_image` |
+| *"OCR this document: /home/user/receipt.jpg"* | `ocr_image` |
+| *"What does this label say? /home/user/photo.jpg"* | `ocr_image` |
+| *"Extract text from /home/user/document.png"* | `ocr_image` |
 
 ### Page Reading
 | What you type | Tool called |
