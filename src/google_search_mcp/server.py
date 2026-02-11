@@ -11,6 +11,7 @@ Tools provided:
     - google_images: Search Google Images for image URLs
     - google_trends: Check Google Trends for topic interest over time
     - google_maps: Search Google Maps for places, restaurants, businesses
+    - google_maps_directions: Get directions between locations with route map screenshot
     - google_finance: Look up stock prices and market data
     - google_weather: Get current weather and forecasts
     - google_shopping: Search Google Shopping for products and prices
@@ -558,19 +559,26 @@ async def google_images(query: str, num_results: int = 5) -> list:
             if not results:
                 return f"No image results found for: {query}"
 
-            # Download thumbnails for inline display
+            # Download full-size images for inline display (fall back to thumbnail)
             for r in results[:num_results]:
+                full_url = r.get("url", "")
                 thumb_url = r.get("thumbnail", "")
-                if not thumb_url:
-                    continue
-                try:
-                    resp = await context.request.get(thumb_url)
-                    if resp.ok:
-                        r["image_bytes"] = await resp.body()
-                        ct = resp.headers.get("content-type", "image/jpeg")
-                        r["content_type"] = ct.split(";")[0].strip()
-                except Exception:
-                    pass
+                for img_url in [full_url, thumb_url]:
+                    if not img_url or not img_url.startswith("http"):
+                        continue
+                    try:
+                        resp = await context.request.get(img_url, timeout=8000)
+                        if resp.ok:
+                            body = await resp.body()
+                            # Skip if too small (likely broken) or too large (>5MB)
+                            if len(body) < 1000 or len(body) > 5_000_000:
+                                continue
+                            r["image_bytes"] = body
+                            ct = resp.headers.get("content-type", "image/jpeg")
+                            r["content_type"] = ct.split(";")[0].strip()
+                            break
+                    except Exception:
+                        continue
 
             # Build mixed content: text descriptions + inline images
             content = [f"Google Image Results for: {query}\n"]
@@ -891,6 +899,197 @@ async def google_maps(query: str, num_results: int = 5) -> str:
     """
     num_results = max(1, min(num_results, 10))
     return await _do_google_maps(query, num_results)
+
+
+# ---------------------------------------------------------------------------
+# google_maps_directions
+# ---------------------------------------------------------------------------
+
+
+async def _do_google_maps_directions(
+    origin: str, destination: str, mode: str = "driving"
+) -> list:
+    """Get directions between two locations with a map screenshot."""
+    # Google Maps uses "bicycling" not "cycling"
+    mode_map = {"cycling": "bicycling"}
+    gm_mode = mode_map.get(mode, mode)
+
+    encoded_origin = quote_plus(origin)
+    encoded_dest = quote_plus(destination)
+    url = (
+        f"https://www.google.com/maps/dir/{encoded_origin}/{encoded_dest}"
+        f"/?travelmode={gm_mode}&hl=en"
+    )
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(
+            headless=True,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+            ],
+        )
+        context = await browser.new_context(
+            user_agent=USER_AGENT,
+            viewport={"width": 1400, "height": 900},
+            locale="en-US",
+        )
+        page = await context.new_page()
+
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            await _dismiss_consent(page)
+            # Wait for the map canvas and route to render
+            await page.wait_for_timeout(5000)
+
+            # Scrape route info from the directions panel
+            route_data = await page.evaluate(
+                """
+                () => {
+                    const data = {distance: '', duration: '', steps: [], summary: ''};
+
+                    // Try to get distance and duration from the trip info
+                    const tripEl = document.querySelector(
+                        '#section-directions-trip-0, ' +
+                        '[data-trip-index="0"], ' +
+                        '.MespJc'
+                    );
+
+                    if (tripEl) {
+                        const text = tripEl.innerText;
+                        // Extract distance and duration patterns
+                        const distMatch = text.match(/(\\d[\\d,.]+\\s*(?:km|mi|m|miles|ft))/i);
+                        const durMatch = text.match(/(\\d+\\s*(?:hr|hour|min|h|d|day)s?(?:\\s*\\d+\\s*(?:min|hr|h)s?)?)/i);
+                        if (distMatch) data.distance = distMatch[1];
+                        if (durMatch) data.duration = durMatch[1];
+                    }
+
+                    // Broader fallback: search entire page for distance/duration
+                    if (!data.distance || !data.duration) {
+                        const allText = document.body.innerText;
+                        if (!data.distance) {
+                            const dm = allText.match(/(\\d[\\d,.]+\\s*(?:km|mi|miles))\\b/i);
+                            if (dm) data.distance = dm[1];
+                        }
+                        if (!data.duration) {
+                            const tm = allText.match(/(\\d+\\s*(?:hr|hour|h)s?\\s*\\d*\\s*(?:min)?s?)/i);
+                            if (!tm) {
+                                const tm2 = allText.match(/(\\d+\\s*min)/i);
+                                if (tm2) data.duration = tm2[1];
+                            } else {
+                                data.duration = tm[1];
+                            }
+                        }
+                    }
+
+                    // Try to get route summary (e.g. "via A9")
+                    const summaryEl = document.querySelector(
+                        '.r4nke, .LjGbjd, span[jstcache]'
+                    );
+                    if (summaryEl) {
+                        const st = summaryEl.innerText.trim();
+                        if (st.toLowerCase().startsWith('via')) {
+                            data.summary = st;
+                        }
+                    }
+
+                    // Get step-by-step directions
+                    const stepEls = document.querySelectorAll(
+                        '[data-legid] .directions-mode-step, ' +
+                        '.directions-mode-step, ' +
+                        'div[jstcache] span.XoKrad, ' +
+                        '.T2yjMc'
+                    );
+                    for (const step of stepEls) {
+                        const t = step.innerText.trim();
+                        if (t && t.length > 2 && t.length < 300) {
+                            data.steps.push(t);
+                        }
+                    }
+
+                    // Fallback: get the directions panel raw text
+                    if (data.steps.length === 0) {
+                        const panel = document.querySelector(
+                            '#directions-searchbox-0, ' +
+                            '.directions-renderer, ' +
+                            '#section-directions-trip-0, ' +
+                            '[role="main"]'
+                        );
+                        if (panel) {
+                            const lines = panel.innerText.split('\\n')
+                                .map(l => l.trim())
+                                .filter(l => l.length > 2 && l.length < 300);
+                            // Take first 30 non-empty lines as raw directions
+                            data.raw_panel = lines.slice(0, 30).join('\\n');
+                        }
+                    }
+
+                    return data;
+                }
+                """
+            )
+
+            # Take a full page screenshot
+            screenshot_bytes = await page.screenshot(full_page=False, type="png")
+
+            # Build result
+            content = []
+
+            header = f"Directions: {origin} → {destination} ({mode})\n"
+            if route_data.get("distance") or route_data.get("duration"):
+                header += f"Distance: {route_data.get('distance', 'N/A')}"
+                header += f" | Duration: {route_data.get('duration', 'N/A')}"
+                if route_data.get("summary"):
+                    header += f" | {route_data['summary']}"
+                header += "\n"
+
+            content.append(header)
+
+            if route_data.get("steps"):
+                steps_text = "Route steps:\n"
+                for i, step in enumerate(route_data["steps"][:25], 1):
+                    steps_text += f"  {i}. {step}\n"
+                content.append(steps_text)
+            elif route_data.get("raw_panel"):
+                content.append(f"Route details:\n{route_data['raw_panel']}\n")
+
+            # Add map screenshot
+            content.append(Image(data=screenshot_bytes, format="png"))
+
+            return content
+
+        except Exception as e:
+            return [f"Directions lookup failed: {e}"]
+
+        finally:
+            await browser.close()
+
+
+@mcp.tool()
+async def google_maps_directions(
+    origin: str, destination: str, mode: str = "driving"
+) -> list:
+    """Get driving/walking/transit/cycling directions between two locations with route info and a map screenshot.
+
+    Sample prompts that trigger this tool:
+        - "Get directions from Berlin to Munich"
+        - "How do I drive from New York to Boston?"
+        - "Walking directions from the Eiffel Tower to the Louvre"
+        - "Transit route from Shibuya to Akihabara"
+        - "Cycling route from Golden Gate Bridge to Fisherman's Wharf"
+        - "Show me the route from London to Edinburgh"
+
+    Args:
+        origin: Starting location (address, city, or place name).
+        destination: Ending location (address, city, or place name).
+        mode: Travel mode - one of "driving" (default), "walking", "transit", or "cycling".
+    """
+    mode = mode.lower().strip()
+    valid_modes = {"driving", "walking", "transit", "cycling"}
+    if mode not in valid_modes:
+        mode = "driving"
+    return await _do_google_maps_directions(origin, destination, mode)
 
 
 # ---------------------------------------------------------------------------
