@@ -25,6 +25,7 @@ Works with LM Studio, Claude Desktop, and any MCP-compatible client.
 | Google Hotels | Built-in | Not available |
 | Google Translate | Built-in | Separate API needed |
 | Google Maps | Built-in | Not available |
+| Google Maps Directions | Built-in (with route map screenshot) | Not available |
 | Google Weather | Built-in | Not available |
 | Google Finance | Built-in | Not available |
 | Google News | Built-in | Usually not available |
@@ -86,6 +87,8 @@ Search Google Flights for flight options, prices, and travel times.
 | `date` | Departure date (optional) | `"March 15"`, `"2025-03-15"` |
 | `return_date` | Return date for round trips (optional) | `"March 22"` |
 
+![Google Flights](images/google_flights.png)
+
 ---
 
 ### `google_hotels` - Hotel Search
@@ -97,6 +100,8 @@ Search for hotels and accommodation with prices and ratings.
 |-----------|-------------|---------|
 | `query` | Hotel search with location (required) | `"Paris"`, `"Tokyo near Shibuya"` |
 | `num_results` | Number of results (1-10, default 5) | `5` |
+
+![Google Hotels](images/google_hotels.png)
 
 ---
 
@@ -125,6 +130,23 @@ Search Google Maps for restaurants, businesses, and places with ratings, address
 
 ---
 
+### `google_maps_directions` - Route Directions with Map Screenshot
+
+Get driving, walking, transit, or cycling directions between two locations. Returns distance, duration, step-by-step route info, and an inline screenshot of the map showing the full route.
+
+**Parameters:**
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `origin` | Starting location (required) | `"Berlin"`, `"Times Square, New York"` |
+| `destination` | Ending location (required) | `"Munich"`, `"Central Park, New York"` |
+| `mode` | Travel mode (default "driving") | `"driving"`, `"walking"`, `"transit"`, `"cycling"` |
+
+Returns: distance, duration, route steps, and an inline map screenshot showing the route.
+
+![Google Maps Directions](images/google_maps.png)
+
+---
+
 ### `google_weather` - Weather Lookup
 
 Get current weather conditions and forecast for any location worldwide.
@@ -149,6 +171,8 @@ Look up stock prices, market data, and company information from Google Finance.
 
 Returns: current price, change, market info, key stats, and company description.
 
+![Google Finance](images/google_stocks.png)
+
 ---
 
 ### `google_news` - News Search
@@ -160,6 +184,8 @@ Search Google News for recent headlines with source and timestamp.
 |-----------|-------------|---------|
 | `query` | News search query (required) | `"AI regulation"` |
 | `num_results` | Number of results (1-10, default 5) | `5` |
+
+![Google News](images/google_news.png)
 
 ---
 
@@ -199,6 +225,10 @@ Search Google Images and display results directly in chat. Images are returned i
 | `query` | Image search query (required) | `"sunset over ocean"` |
 | `num_results` | Number of results (1-10, default 5) | `5` |
 
+![Google Image Search](images/google_image_search.png)
+
+![Google Image Search](images/google_image_search2.png)
+
 ---
 
 ### `google_lens` - Reverse Image Search
@@ -213,6 +243,8 @@ Supports image URLs, local file paths, and base64-encoded images (drag-and-drop 
 | `image_source` | Image URL, local file path, or base64 image data (required) | `"https://example.com/photo.jpg"` or `"/home/user/image.jpg"` or drag image into chat |
 
 Returns: identified object/product name, description, visual matches, text found in image, and related products with prices.
+
+![Google Lens Reverse Image Search](images/google_reverse_image_search.png)
 
 ---
 
@@ -254,6 +286,8 @@ Gives text-reading capabilities to text-only models without needing a vision mod
 | `image_source` | Local file path or base64 image data (required) | `"/home/user/screenshot.png"` or drag image into chat |
 
 Returns: extracted text sorted by position, with confidence scores.
+
+![Local OCR](images/local_OCR.png)
 
 **Example output:**
 ```
@@ -410,6 +444,16 @@ Here are example prompts you can type into LM Studio or Claude Desktop, and whic
 | *"Search for hotels in Tokyo"* | `google_maps` |
 | *"Find EV charging stations in San Francisco"* | `google_maps` |
 | *"What are the top-rated gyms in London?"* | `google_maps` |
+
+### Directions (with route map screenshot)
+| What you type | Tool called |
+|--------------|-------------|
+| *"Get directions from Berlin to Munich"* | `google_maps_directions` |
+| *"How do I drive from New York to Boston?"* | `google_maps_directions` |
+| *"Walking directions from the Eiffel Tower to the Louvre"* | `google_maps_directions` |
+| *"Transit route from Shibuya to Akihabara"* | `google_maps_directions` |
+| *"Cycling route from Golden Gate Bridge to Fisherman's Wharf"* | `google_maps_directions` |
+| *"Show me the route from London to Edinburgh"* | `google_maps_directions` |
 
 ### Weather
 | What you type | Tool called |
