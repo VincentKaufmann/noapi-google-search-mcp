@@ -21,6 +21,7 @@ Tools provided:
     - google_lens: Reverse image search to identify objects, products, brands
     - google_lens_detect: Detect objects in image and identify each via Lens
     - ocr_image: Extract text from images locally using RapidOCR (no internet needed)
+    - transcribe_video: Download and transcribe YouTube videos with timestamps
     - list_images: List image files in a directory for use with google_lens
     - visit_page: Fetch a URL and return its text content
 """
@@ -2537,6 +2538,154 @@ async def ocr_image(image_source: str) -> str:
 
     except Exception as e:
         return f"OCR failed: {e}"
+
+
+# ---------------------------------------------------------------------------
+# transcribe_video (YouTube/video transcription with timestamps)
+# ---------------------------------------------------------------------------
+
+TRANSCRIBE_CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "noapi-google-search-mcp")
+
+
+def _format_timestamp(seconds: float) -> str:
+    """Format seconds into H:MM:SS or M:SS."""
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    if h > 0:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
+
+
+@mcp.tool()
+async def transcribe_video(
+    url: str,
+    model_size: str = "base",
+    language: str = "",
+) -> str:
+    """Download and transcribe a YouTube video (or any video URL) with timestamps.
+
+    Downloads the audio, transcribes it locally using Whisper, and returns a
+    full timestamped transcript. The LLM can then answer questions about the
+    video content and point to specific timestamps.
+
+    Supported model sizes: tiny, base, small, medium, large
+    - tiny: fastest, least accurate (~75MB)
+    - base: good balance of speed and accuracy (~150MB, default)
+    - small: better accuracy, slower (~500MB)
+    - medium: high accuracy, much slower (~1.5GB)
+    - large: best accuracy, slowest (~3GB)
+
+    Models are downloaded automatically on first use.
+
+    Sample prompts that trigger this tool:
+        - "Transcribe this video: https://youtube.com/watch?v=..."
+        - "What is discussed in this video? https://youtube.com/watch?v=..."
+        - "Summarize this YouTube video: https://..."
+        - "At what timestamp do they talk about X in https://..."
+        - "Explain the concept from 5:30 in this video: https://..."
+
+    Args:
+        url: YouTube URL or any video URL supported by yt-dlp.
+        model_size: Whisper model size (tiny/base/small/medium/large). Default: base.
+        language: Language code (e.g. "en", "de", "fr"). Auto-detected if empty.
+    """
+    try:
+        import yt_dlp
+    except ImportError:
+        return "yt-dlp is required. Install with: pip install yt-dlp"
+
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError:
+        return "faster-whisper is required. Install with: pip install faster-whisper"
+
+    # Validate model size
+    valid_sizes = ("tiny", "base", "small", "medium", "large")
+    if model_size not in valid_sizes:
+        model_size = "base"
+
+    # Create cache directory
+    os.makedirs(TRANSCRIBE_CACHE_DIR, exist_ok=True)
+
+    # Download audio
+    audio_path = os.path.join(TRANSCRIBE_CACHE_DIR, "audio_temp")
+    ydl_opts = {
+        "format": "bestaudio[ext=m4a]/bestaudio",
+        "outtmpl": audio_path + ".%(ext)s",
+        "quiet": True,
+        "no_warnings": True,
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            title = info.get("title", "Unknown")
+            duration = info.get("duration", 0)
+            uploader = info.get("uploader", "Unknown")
+            ext = info.get("ext", "m4a")
+            actual_audio_path = audio_path + "." + ext
+    except Exception as e:
+        return f"Failed to download video: {e}"
+
+    if not os.path.isfile(actual_audio_path):
+        # Try to find the downloaded file
+        for f in os.listdir(TRANSCRIBE_CACHE_DIR):
+            if f.startswith("audio_temp"):
+                actual_audio_path = os.path.join(TRANSCRIBE_CACHE_DIR, f)
+                break
+        else:
+            return "Failed to download audio from the video."
+
+    try:
+        # Transcribe
+        model = WhisperModel(model_size, device="cpu", compute_type="int8")
+
+        transcribe_opts = {"beam_size": 5}
+        if language:
+            transcribe_opts["language"] = language
+
+        segments_gen, info = model.transcribe(actual_audio_path, **transcribe_opts)
+
+        # Collect all segments
+        segments = list(segments_gen)
+
+        if not segments:
+            return f"No speech detected in: {title}"
+
+        # Format output
+        lines = [
+            f"Video Transcript",
+            f"Title: {title}",
+            f"Channel: {uploader}",
+            f"Duration: {_format_timestamp(duration)}",
+            f"Language: {info.language} (confidence: {info.language_probability:.0%})",
+            f"URL: {url}",
+            f"",
+            f"--- Transcript ---",
+        ]
+
+        for seg in segments:
+            start = _format_timestamp(seg.start)
+            end = _format_timestamp(seg.end)
+            text = seg.text.strip()
+            lines.append(f"[{start} - {end}] {text}")
+
+        lines.append("")
+        lines.append("--- End of Transcript ---")
+        lines.append(f"Total segments: {len(segments)}")
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        return f"Transcription failed: {e}"
+
+    finally:
+        # Clean up audio file
+        try:
+            os.remove(actual_audio_path)
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------------------
