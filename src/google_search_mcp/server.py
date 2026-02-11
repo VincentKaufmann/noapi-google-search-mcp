@@ -2793,19 +2793,20 @@ async def extract_video_clip(
     output_filename: str = "",
     ctx: Context = None,
 ) -> str:
-    """Extract a video clip between two timestamps from a YouTube video or local file.
+    """Extract a video clip by topic from a YouTube video or local file.
 
-    Downloads the video (if a URL), then cuts the segment between start_seconds
-    and end_seconds. A buffer is added before and after to avoid cutting off
-    content. The clip is saved to ~/clips/.
+    Used after transcribe_video. The LLM reads the transcript, finds the
+    timestamps for the requested topic, and calls this tool to cut the clip.
+    The user just asks "extract the part about X" - no manual timestamps needed.
 
-    Use this after transcribe_video to extract segments about specific topics.
+    A buffer is added before and after to avoid cutting off content.
+    The clip is saved to ~/clips/.
 
     Sample prompts that trigger this tool:
-        - "Extract the part where they discuss X (2:30 to 5:15)"
-        - "Cut the segment from 10:00 to 15:30 from this video"
-        - "Save the clip about Y from the video"
-        - "Get me the intro section of this video"
+        - "Extract the part where they talk about memory bandwidth"
+        - "Save the segment where they discuss pricing"
+        - "Cut out the section about the hardware specs"
+        - "Get me the intro of this video"
 
     Args:
         url: YouTube URL, video URL, or local file path.

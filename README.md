@@ -4,9 +4,9 @@ vincentkaufmann@protonmail.com
 
 **Give any LLM real Google search, vision, local OCR, and YouTube video understanding. No API key, no vision model needed.**
 
-**Google Search, Google Lens + OpenCV object detection + local OCR + YouTube transcription, Q&A & clip extraction for Local LLMs**
+**Google Search, Google Lens + OpenCV object detection + local OCR + YouTube transcription, Q&A & clip extraction by topic for Local LLMs**
 
-An MCP (Model Context Protocol) server that gives your local LLM real Google search, browsing, vision, text-reading, and full video understanding. Paste a YouTube link and the LLM transcribes it locally with timestamps, answers questions about the content, tells you when topics start and end, and extracts specific segments as video clips. Uses headless Chromium via Playwright for search, Google Lens for image identification, RapidOCR for offline OCR, and faster-whisper for local video transcription. No Google API key, no Custom Search Engine setup, no usage limits - just real Google results.
+An MCP (Model Context Protocol) server that gives your local LLM real Google search, browsing, vision, text-reading, and full video understanding. Paste a YouTube link and the LLM transcribes it locally, answers questions about the content, and extracts video clips by topic - just ask "extract the part about X" and the LLM finds the right timestamps from the transcript and cuts the clip for you. Uses headless Chromium via Playwright for search, Google Lens for image identification, RapidOCR for offline OCR, and faster-whisper for local video transcription. No Google API key, no Custom Search Engine setup, no usage limits - just real Google results.
 
 Works with LM Studio, Claude Desktop, and any MCP-compatible client.
 
@@ -35,7 +35,7 @@ Works with LM Studio, Claude Desktop, and any MCP-compatible client.
 | Object detection | Built-in (OpenCV + Google Lens per object) | Not available |
 | Local OCR | Built-in (RapidOCR, works offline) | Not available |
 | Video transcription | Built-in (faster-whisper, local) | Not available |
-| Video clip extraction | Built-in (extract segments by timestamp) | Not available |
+| Video clip extraction | Built-in (extract segments by topic) | Not available |
 | Google Trends | Built-in | Separate API needed |
 | Page fetching | Built-in `visit_page` tool | Usually separate |
 
@@ -298,11 +298,9 @@ Language: en (confidence: 98%)
 
 ---
 
-### `extract_video_clip` - Video Clip Extraction
+### `extract_video_clip` - Video Clip Extraction by Topic
 
-Extract a segment from a YouTube video or local video file by timestamps. Adds a configurable buffer before and after to avoid cutting off content. Clips are saved to `~/clips/`.
-
-Use after `transcribe_video` to cut out specific segments about topics of interest.
+Extract video clips by topic. After transcription, just ask "extract the part about X" and the LLM reads the transcript, finds the right timestamps, and cuts the clip automatically. A buffer is added before and after to avoid cutting off content. Clips are saved to `~/clips/`.
 
 **Parameters:**
 | Parameter | Description | Example |
@@ -476,12 +474,12 @@ Here are example prompts you can type into LM Studio or Claude Desktop, and whic
 | *"Summarize this YouTube video: https://..."* | `transcribe_video` |
 | *"At what timestamp do they talk about X in this video?"* | `transcribe_video` |
 
-### Video Clip Extraction
+### Video Clip Extraction by Topic
 | What you type | Tool called |
 |--------------|-------------|
-| *"Extract the part about hardware (2:30 to 5:15) from the video"* | `extract_video_clip` |
-| *"Cut the intro section (0:00 to 1:30) and save it"* | `extract_video_clip` |
+| *"Extract the part where they talk about memory bandwidth"* | `extract_video_clip` |
 | *"Save the segment where they discuss pricing"* | `extract_video_clip` |
+| *"Cut out the section about the hardware specs"* | `extract_video_clip` |
 
 ### Page Reading
 | What you type | Tool called |
