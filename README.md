@@ -30,7 +30,7 @@ Works with LM Studio, Claude Desktop, and any MCP-compatible client.
 | Google News | Built-in | Usually not available |
 | Google Scholar | Built-in | Not available |
 | Google Books | Built-in | Not available |
-| Google Images | Built-in | Separate API needed |
+| Google Images | Built-in (inline in chat) | Separate API needed |
 | Google Lens | Built-in (reverse image search) | Not available |
 | Object detection | Built-in (OpenCV + Google Lens per object) | Not available |
 | Local OCR | Built-in (RapidOCR, works offline) | Not available |
@@ -189,9 +189,9 @@ Search Google Books for books, textbooks, and publications.
 
 ---
 
-### `google_images` - Image Search
+### `google_images` - Image Search (with inline images)
 
-Search Google Images and get image URLs.
+Search Google Images and display results directly in chat. Images are returned inline so you can see them without leaving the conversation.
 
 **Parameters:**
 | Parameter | Description | Example |
@@ -205,12 +205,12 @@ Search Google Images and get image URLs.
 
 Identify objects, products, brands, landmarks, and text in images using Google Lens. Gives vision capabilities to text-only models.
 
-Supports both public image URLs and local file paths, so LM Studio users can save images locally and pass the file path.
+Supports image URLs, local file paths, and base64-encoded images (drag-and-drop in LM Studio).
 
 **Parameters:**
 | Parameter | Description | Example |
 |-----------|-------------|---------|
-| `image_source` | Image URL or local file path (required) | `"https://example.com/photo.jpg"` or `"/home/user/image.jpg"` |
+| `image_source` | Image URL, local file path, or base64 image data (required) | `"https://example.com/photo.jpg"` or `"/home/user/image.jpg"` or drag image into chat |
 
 Returns: identified object/product name, description, visual matches, text found in image, and related products with prices.
 
@@ -231,10 +231,12 @@ Check Google Trends for topic interest, related topics, and related queries.
 
 Detect all objects in an image using OpenCV, crop each one, and identify them individually via Google Lens. Useful when an image contains multiple items and you want each identified separately.
 
+Supports local file paths and base64-encoded images (drag-and-drop in LM Studio).
+
 **Parameters:**
 | Parameter | Description | Example |
 |-----------|-------------|---------|
-| `image_source` | Local file path to the image (required) | `"/home/user/photo.jpg"` |
+| `image_source` | Local file path or base64 image data (required) | `"/home/user/photo.jpg"` or drag image into chat |
 
 Returns: per-object identification from Google Lens, including the original full image results.
 
@@ -244,12 +246,12 @@ Returns: per-object identification from Google Lens, including the original full
 
 Extract text from images locally using RapidOCR (PaddleOCR models on ONNX Runtime). Runs entirely offline. Reads screenshots, documents, photos of signs, labels, receipts, or any image containing text.
 
-Gives text-reading capabilities to text-only models without needing a vision model or internet.
+Gives text-reading capabilities to text-only models without needing a vision model or internet. Supports local file paths and base64-encoded images (drag-and-drop in LM Studio).
 
 **Parameters:**
 | Parameter | Description | Example |
 |-----------|-------------|---------|
-| `image_source` | Local file path to the image (required) | `"/home/user/screenshot.png"` |
+| `image_source` | Local file path or base64 image data (required) | `"/home/user/screenshot.png"` or drag image into chat |
 
 Returns: extracted text sorted by position, with confidence scores.
 
@@ -446,10 +448,11 @@ Here are example prompts you can type into LM Studio or Claude Desktop, and whic
 | *"Search for books by Stephen King"* | `google_books` |
 | *"What are the best books on Python programming?"* | `google_books` |
 
-### Images
+### Images (displayed inline in chat)
 | What you type | Tool called |
 |--------------|-------------|
 | *"Show me images of the Northern Lights"* | `google_images` |
+| *"Show me what a DGX Spark looks like"* | `google_images` |
 | *"Find diagrams of neural network architecture"* | `google_images` |
 
 ### Reverse Image Search
@@ -479,6 +482,16 @@ Here are example prompts you can type into LM Studio or Claude Desktop, and whic
 | *"OCR this document: /home/user/receipt.jpg"* | `ocr_image` |
 | *"What does this label say? /home/user/photo.jpg"* | `ocr_image` |
 | *"Extract text from /home/user/document.png"* | `ocr_image` |
+
+### Drag-and-Drop Images (LM Studio with vision override)
+| What you do | Tool called |
+|------------|-------------|
+| Drag image into chat + *"What is this?"* | `google_lens` |
+| Drag image into chat + *"Read the text"* | `ocr_image` |
+| Drag image into chat + *"Detect all objects"* | `google_lens_detect` |
+| Drag image into chat + *"Reverse image search this"* | `google_lens` |
+
+> **Tip:** To enable drag-and-drop images with text-only models in LM Studio, add a `model.yaml` file in the model directory with `metadataOverrides: { vision: true }`. The image will be sent as base64 and the MCP tools handle it automatically.
 
 ### Video Transcription
 | What you type | Tool called |

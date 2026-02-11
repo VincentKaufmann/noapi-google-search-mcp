@@ -37,7 +37,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote_plus
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.fastmcp import Context, FastMCP, Image
 from playwright.async_api import async_playwright
 
 mcp = FastMCP("google-search")
@@ -475,8 +475,26 @@ async def google_scholar(query: str, num_results: int = 5) -> str:
 # google_images
 # ---------------------------------------------------------------------------
 
-async def _do_google_images(query: str, num_results: int = 5) -> str:
-    """Launch headless Chromium, search Google Images, and scrape results."""
+@mcp.tool()
+async def google_images(query: str, num_results: int = 5) -> list:
+    """Search Google Images and return images inline in chat.
+
+    Returns image thumbnails directly in the conversation so you can see them.
+    Also provides source URLs for each image.
+
+    Sample prompts that trigger this tool:
+        - "Show me images of the Northern Lights"
+        - "Find pictures of modern kitchen designs"
+        - "Search for diagrams of neural network architecture"
+        - "Show me what a DGX Spark looks like"
+
+    Args:
+        query: The image search query string.
+        num_results: Number of image results to return (default 5, max 10).
+    """
+    import base64 as b64mod
+
+    num_results = max(1, min(num_results, 10))
     encoded_query = quote_plus(query)
     url = f"https://www.google.com/search?q={encoded_query}&hl=en&tbm=isch"
 
@@ -494,7 +512,6 @@ async def _do_google_images(query: str, num_results: int = 5) -> str:
                 (numResults) => {
                     const results = [];
 
-                    // Google Images stores data in <a> tags with image thumbnails
                     const imgLinks = document.querySelectorAll('div[data-id] a[href^="/imgres"], a[jsname]');
                     for (const a of imgLinks) {
                         if (results.length >= numResults) break;
@@ -505,7 +522,6 @@ async def _do_google_images(query: str, num_results: int = 5) -> str:
                         const thumbnail = img.src || img.dataset.src || '';
                         if (!thumbnail || thumbnail.startsWith('data:')) continue;
 
-                        // Try to extract the full image URL from the href
                         let fullUrl = '';
                         try {
                             const href = a.href || '';
@@ -513,16 +529,13 @@ async def _do_google_images(query: str, num_results: int = 5) -> str:
                             fullUrl = params.get('imgurl') || '';
                         } catch(e) {}
 
-                        const title = img.alt || '';
-
                         results.push({
-                            title: title,
+                            title: img.alt || '',
                             thumbnail: thumbnail,
                             url: fullUrl || thumbnail,
                         });
                     }
 
-                    // Fallback: grab all visible images with http src
                     if (results.length === 0) {
                         const allImgs = document.querySelectorAll('#search img[src^="http"], #islrg img[src^="http"]');
                         for (const img of allImgs) {
@@ -545,39 +558,48 @@ async def _do_google_images(query: str, num_results: int = 5) -> str:
             if not results:
                 return f"No image results found for: {query}"
 
-            lines = [f"Google Image Results for: {query}\n"]
-            for i, r in enumerate(results[:num_results], 1):
-                lines.append(f"{i}. {r.get('title', 'Untitled')}")
-                lines.append(f"   Image URL: {r['url']}")
-                if r.get("thumbnail") and r["thumbnail"] != r["url"]:
-                    lines.append(f"   Thumbnail: {r['thumbnail']}")
-                lines.append("")
+            # Download thumbnails for inline display
+            for r in results[:num_results]:
+                thumb_url = r.get("thumbnail", "")
+                if not thumb_url:
+                    continue
+                try:
+                    resp = await context.request.get(thumb_url)
+                    if resp.ok:
+                        r["image_bytes"] = await resp.body()
+                        ct = resp.headers.get("content-type", "image/jpeg")
+                        r["content_type"] = ct.split(";")[0].strip()
+                except Exception:
+                    pass
 
-            return "\n".join(lines)
+            # Build mixed content: text descriptions + inline images
+            content = [f"Google Image Results for: {query}\n"]
+
+            for i, r in enumerate(results[:num_results], 1):
+                desc = f"{i}. {r.get('title', 'Untitled')}"
+                if r.get("url"):
+                    desc += f"\n   Source: {r['url']}"
+                content.append(desc)
+
+                if r.get("image_bytes"):
+                    try:
+                        ct = r.get("content_type", "image/jpeg")
+                        fmt_map = {
+                            "image/jpeg": "jpeg", "image/png": "png",
+                            "image/gif": "gif", "image/webp": "webp",
+                        }
+                        fmt = fmt_map.get(ct, "jpeg")
+                        content.append(Image(data=r["image_bytes"], format=fmt))
+                    except Exception:
+                        pass
+
+            return content
 
         except Exception as e:
             return f"Image search failed: {e}"
 
         finally:
             await browser.close()
-
-
-@mcp.tool()
-async def google_images(query: str, num_results: int = 5) -> str:
-    """Search Google Images and return image URLs with descriptions.
-
-    Sample prompts that trigger this tool:
-        - "Show me images of the Northern Lights"
-        - "Find pictures of modern kitchen designs"
-        - "Search for diagrams of neural network architecture"
-        - "Find images of the Mars rover"
-
-    Args:
-        query: The image search query string.
-        num_results: Number of image results to return (default 5, max 10).
-    """
-    num_results = max(1, min(num_results, 10))
-    return await _do_google_images(query, num_results)
 
 
 # ---------------------------------------------------------------------------
@@ -1802,6 +1824,49 @@ async def google_hotels(query: str, num_results: int = 5) -> str:
 # google_lens (reverse image search)
 # ---------------------------------------------------------------------------
 
+def _is_base64_image(data: str) -> bool:
+    """Check if the input looks like base64-encoded image data."""
+    # data:image/png;base64,... or raw base64 (very long string, no slashes/spaces)
+    if data.startswith("data:image/"):
+        return True
+    # Raw base64: long string without path separators, starts with typical base64 chars
+    if len(data) > 200 and "/" not in data[:50] and not data.startswith(("http", "~")):
+        try:
+            import base64
+            # Try decoding first 100 chars to verify it's valid base64
+            base64.b64decode(data[:100] + "==", validate=True)
+            return True
+        except Exception:
+            pass
+    return False
+
+
+def _save_base64_image(data: str) -> str:
+    """Save base64 image data to a temp file and return the path."""
+    import base64
+    import tempfile
+
+    # Strip data URI prefix if present
+    if data.startswith("data:image/"):
+        # data:image/png;base64,<data>
+        header, b64data = data.split(",", 1)
+        mime = header.split(";")[0].split(":")[1]
+        ext = mime.split("/")[1].replace("jpeg", "jpg")
+    else:
+        b64data = data
+        ext = "png"  # default
+
+    img_bytes = base64.b64decode(b64data)
+
+    tmp = tempfile.NamedTemporaryFile(
+        suffix=f".{ext}", prefix="mcp_img_", delete=False,
+        dir=os.path.join(os.path.expanduser("~"), ".cache", "noapi-google-search-mcp"),
+    )
+    tmp.write(img_bytes)
+    tmp.close()
+    return tmp.name
+
+
 def _is_local_file(path: str) -> bool:
     """Check if the input looks like a local file path rather than a URL."""
     if path.startswith(("http://", "https://", "data:")):
@@ -1811,7 +1876,14 @@ def _is_local_file(path: str) -> bool:
 
 
 async def _do_google_lens(image_source: str) -> str:
-    """Reverse image search using Google Lens. Supports URLs and local file paths."""
+    """Reverse image search using Google Lens. Supports URLs, local files, and base64."""
+    # Handle base64 input (from drag-and-drop in LM Studio)
+    tmp_base64_path = None
+    if _is_base64_image(image_source):
+        os.makedirs(os.path.join(os.path.expanduser("~"), ".cache", "noapi-google-search-mcp"), exist_ok=True)
+        tmp_base64_path = _save_base64_image(image_source)
+        image_source = tmp_base64_path
+
     is_local = _is_local_file(image_source)
 
     if is_local:
@@ -2050,28 +2122,29 @@ async def _do_google_lens(image_source: str) -> str:
 
         finally:
             await browser.close()
+            # Clean up base64 temp file
+            if tmp_base64_path:
+                try:
+                    os.remove(tmp_base64_path)
+                except OSError:
+                    pass
 
 
 @mcp.tool()
 async def google_lens(image_source: str) -> str:
     """Reverse image search using Google Lens. Identify objects, products, brands, landmarks, text in images, and find visually similar results.
 
-    This gives vision capabilities to text-only models. Supports both public image URLs and local file paths.
-
-    For local files, pass the absolute file path (e.g. /home/user/photos/image.jpg).
-    For web images, pass the full URL (e.g. https://example.com/photo.jpg).
+    This gives vision capabilities to text-only models. Supports public image URLs,
+    local file paths, and base64-encoded image data (from drag-and-drop in LM Studio).
 
     Sample prompts that trigger this tool:
         - "What is this product? https://example.com/photo.jpg"
         - "Identify this image: /home/user/photos/image.jpg"
-        - "What is in this image? /tmp/screenshot.png"
-        - "Do a reverse image search on this URL"
+        - "What is in this image?" (with image dragged into chat)
         - "What brand is this? [image URL or file path]"
-        - "Find similar images to this one"
-        - "Read the text in this image"
 
     Args:
-        image_source: A public image URL or a local file path to the image.
+        image_source: A public image URL, local file path, or base64-encoded image data.
     """
     return await _do_google_lens(image_source)
 
@@ -2383,17 +2456,21 @@ async def google_lens_detect(image_source: str) -> str:
     This is useful when an image contains multiple items (e.g. a monitor AND a hardware device)
     and you want each identified separately.
 
-    Requires a local file path (not a URL).
+    Supports local file paths and base64-encoded image data (from drag-and-drop).
 
     Sample prompts that trigger this tool:
         - "Detect and identify all objects in this image: /path/to/photo.jpg"
-        - "What are all the items in this photo? /path/to/image.png"
+        - "What are all the items in this photo?" (with image dragged into chat)
         - "Identify each object separately in /path/to/setup.jpg"
 
     Args:
-        image_source: Local file path to the image.
+        image_source: Local file path or base64-encoded image data.
     """
-    if image_source.startswith(("http://", "https://")):
+    # Handle base64 input
+    if _is_base64_image(image_source):
+        os.makedirs(os.path.join(os.path.expanduser("~"), ".cache", "noapi-google-search-mcp"), exist_ok=True)
+        image_source = _save_base64_image(image_source)
+    elif image_source.startswith(("http://", "https://")):
         return "google_lens_detect only works with local files. Use google_lens for URLs."
     return await _do_google_lens_detect(image_source)
 
@@ -2468,29 +2545,34 @@ async def ocr_image(image_source: str) -> str:
     screenshots, documents, photos of signs, labels, receipts, or any image
     containing text. Runs entirely locally.
 
-    This gives text-reading capabilities to text-only models without needing
-    a vision model or internet access.
+    Supports local file paths and base64-encoded image data (from drag-and-drop).
 
     Sample prompts that trigger this tool:
         - "Read the text in this image: /path/to/image.jpg"
-        - "OCR this screenshot: /path/to/screenshot.png"
+        - "OCR this screenshot" (with image dragged into chat)
         - "What does this document say? /path/to/document.jpg"
-        - "Extract text from /path/to/receipt.jpg"
-        - "Read this label: /path/to/photo.jpg"
+        - "Extract text from this image" (with image dragged into chat)
 
     Args:
-        image_source: Local file path to the image (e.g. /home/user/photo.jpg).
+        image_source: Local file path or base64-encoded image data.
     """
     try:
         from rapidocr_onnxruntime import RapidOCR
     except ImportError:
         return "rapidocr-onnxruntime is required for OCR. Install with: pip install rapidocr-onnxruntime"
 
-    file_path = str(Path(image_source).expanduser().resolve())
-    if not os.path.isfile(file_path):
-        return f"File not found: {image_source}\nPlease provide a valid file path."
-
+    # Handle base64 input
+    tmp_base64_path = None
     try:
+        if _is_base64_image(image_source):
+            os.makedirs(os.path.join(os.path.expanduser("~"), ".cache", "noapi-google-search-mcp"), exist_ok=True)
+            tmp_base64_path = _save_base64_image(image_source)
+            image_source = tmp_base64_path
+
+        file_path = str(Path(image_source).expanduser().resolve())
+        if not os.path.isfile(file_path):
+            return f"File not found: {image_source}\nPlease provide a valid file path."
+
         engine = RapidOCR()
         result, elapse = engine(file_path)
 
@@ -2543,6 +2625,9 @@ async def ocr_image(image_source: str) -> str:
 
     except Exception as e:
         return f"OCR failed: {e}"
+    finally:
+        if tmp_base64_path and os.path.exists(tmp_base64_path):
+            os.unlink(tmp_base64_path)
 
 
 # ---------------------------------------------------------------------------
