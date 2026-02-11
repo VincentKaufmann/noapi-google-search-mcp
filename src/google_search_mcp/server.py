@@ -22,6 +22,7 @@ Tools provided:
     - google_lens_detect: Detect objects in image and identify each via Lens
     - ocr_image: Extract text from images locally using RapidOCR (no internet needed)
     - transcribe_video: Download and transcribe YouTube videos with timestamps
+    - extract_video_clip: Extract a segment from a video by timestamps
     - list_images: List image files in a directory for use with google_lens
     - visit_page: Fetch a URL and return its text content
 """
@@ -2686,6 +2687,194 @@ async def transcribe_video(
             os.remove(actual_audio_path)
         except OSError:
             pass
+
+
+# ---------------------------------------------------------------------------
+# extract_video_clip (cut a segment from a video by timestamps)
+# ---------------------------------------------------------------------------
+
+CLIPS_DIR = os.path.join(os.path.expanduser("~"), "clips")
+
+
+@mcp.tool()
+async def extract_video_clip(
+    url: str,
+    start_seconds: float,
+    end_seconds: float,
+    buffer_seconds: float = 3.0,
+    output_filename: str = "",
+) -> str:
+    """Extract a video clip between two timestamps from a YouTube video or local file.
+
+    Downloads the video (if a URL), then cuts the segment between start_seconds
+    and end_seconds. A buffer is added before and after to avoid cutting off
+    content. The clip is saved to ~/clips/.
+
+    Use this after transcribe_video to extract segments about specific topics.
+
+    Sample prompts that trigger this tool:
+        - "Extract the part where they discuss X (2:30 to 5:15)"
+        - "Cut the segment from 10:00 to 15:30 from this video"
+        - "Save the clip about Y from the video"
+        - "Get me the intro section of this video"
+
+    Args:
+        url: YouTube URL, video URL, or local file path.
+        start_seconds: Start time in seconds (e.g. 150 for 2:30).
+        end_seconds: End time in seconds (e.g. 315 for 5:15).
+        buffer_seconds: Extra seconds before/after the segment (default: 3).
+        output_filename: Optional filename for the clip (without extension).
+    """
+    try:
+        import av
+    except ImportError:
+        return "PyAV is required. Install with: pip install av"
+
+    os.makedirs(CLIPS_DIR, exist_ok=True)
+    os.makedirs(TRANSCRIBE_CACHE_DIR, exist_ok=True)
+
+    # Apply buffer
+    clip_start = max(0, start_seconds - buffer_seconds)
+    clip_end = end_seconds + buffer_seconds
+
+    video_path = None
+    title = "clip"
+
+    # Check if URL is a local file
+    if os.path.isfile(url):
+        video_path = url
+        title = Path(url).stem
+    else:
+        # Download video with yt-dlp
+        try:
+            import yt_dlp
+        except ImportError:
+            return "yt-dlp is required. Install with: pip install yt-dlp"
+
+        video_dl_path = os.path.join(TRANSCRIBE_CACHE_DIR, "video_temp")
+        ydl_opts = {
+            "format": "best[ext=mp4][height<=1080]/best[ext=mp4]/best",
+            "outtmpl": video_dl_path + ".%(ext)s",
+            "quiet": True,
+            "no_warnings": True,
+        }
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                title = info.get("title", "clip")
+                ext = info.get("ext", "mp4")
+                video_path = video_dl_path + "." + ext
+        except Exception as e:
+            return f"Failed to download video: {e}"
+
+        if not video_path or not os.path.isfile(video_path):
+            # Find the downloaded file
+            for f in os.listdir(TRANSCRIBE_CACHE_DIR):
+                if f.startswith("video_temp"):
+                    video_path = os.path.join(TRANSCRIBE_CACHE_DIR, f)
+                    break
+            else:
+                return "Failed to download video."
+
+    # Generate output filename
+    safe_title = re.sub(r'[^\w\s-]', '', title)[:50].strip().replace(' ', '_')
+    if output_filename:
+        safe_title = re.sub(r'[^\w\s-]', '', output_filename)[:50].strip().replace(' ', '_')
+
+    start_str = _format_timestamp(clip_start).replace(':', '-')
+    end_str = _format_timestamp(clip_end).replace(':', '-')
+    out_name = f"{safe_title}_{start_str}_to_{end_str}.mp4"
+    out_path = os.path.join(CLIPS_DIR, out_name)
+
+    try:
+        inp = av.open(video_path)
+
+        # Get streams
+        video_stream = inp.streams.video[0] if inp.streams.video else None
+        audio_stream = inp.streams.audio[0] if inp.streams.audio else None
+
+        if not video_stream and not audio_stream:
+            inp.close()
+            return "No video or audio streams found in the file."
+
+        total_duration = float(inp.duration / av.time_base) if inp.duration else 0
+        if total_duration and clip_end > total_duration:
+            clip_end = total_duration
+
+        out = av.open(out_path, 'w')
+
+        # Create output streams
+        o_vs = None
+        if video_stream:
+            o_vs = out.add_stream('libx264', rate=video_stream.average_rate)
+            o_vs.width = video_stream.codec_context.width
+            o_vs.height = video_stream.codec_context.height
+            o_vs.pix_fmt = video_stream.codec_context.pix_fmt or 'yuv420p'
+
+        o_as = None
+        if audio_stream:
+            o_as = out.add_stream('aac', rate=audio_stream.codec_context.sample_rate)
+            o_as.layout = audio_stream.codec_context.layout
+
+        # Extract video frames
+        if o_vs and video_stream:
+            inp.seek(int(clip_start * av.time_base), any_frame=False)
+            for frame in inp.decode(video=0):
+                ts = float(frame.time) if frame.time is not None else 0
+                if ts < clip_start:
+                    continue
+                if ts > clip_end:
+                    break
+                for packet in o_vs.encode(frame):
+                    out.mux(packet)
+            for packet in o_vs.encode():
+                out.mux(packet)
+
+        # Extract audio frames
+        if o_as and audio_stream:
+            inp.seek(int(clip_start * av.time_base), any_frame=False)
+            for frame in inp.decode(audio=0):
+                ts = float(frame.time) if frame.time is not None else 0
+                if ts < clip_start:
+                    continue
+                if ts > clip_end:
+                    break
+                frame.pts = None
+                for packet in o_as.encode(frame):
+                    out.mux(packet)
+            for packet in o_as.encode():
+                out.mux(packet)
+
+        out.close()
+        inp.close()
+
+        clip_size = os.path.getsize(out_path)
+        clip_dur = clip_end - clip_start
+
+        result = [
+            f"Video clip extracted successfully!",
+            f"",
+            f"Source: {title}",
+            f"Segment: {_format_timestamp(clip_start)} - {_format_timestamp(clip_end)} "
+            f"(requested {_format_timestamp(start_seconds)} - {_format_timestamp(end_seconds)} + {buffer_seconds}s buffer)",
+            f"Duration: {_format_timestamp(clip_dur)}",
+            f"Size: {clip_size / (1024*1024):.1f} MB",
+            f"Saved to: {out_path}",
+        ]
+        return "\n".join(result)
+
+    except Exception as e:
+        return f"Failed to extract clip: {e}"
+
+    finally:
+        # Clean up downloaded video (keep clips)
+        if not os.path.isfile(url):
+            try:
+                if video_path and os.path.isfile(video_path):
+                    os.remove(video_path)
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------------------

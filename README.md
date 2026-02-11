@@ -2,11 +2,11 @@
 
 vincentkaufmann@protonmail.com
 
-**Give any LLM real Google search, vision, and OCR capabilities. No API key, no vision model needed.**
+**Give any LLM real Google search, vision, OCR, and video transcription capabilities. No API key, no vision model needed.**
 
-**Google Search, Google Lens + OpenCV object detection + local OCR for Local LLMs**
+**Google Search, Google Lens + OpenCV object detection + local OCR + YouTube transcription & clip extraction for Local LLMs**
 
-An MCP (Model Context Protocol) server that gives your local LLM real Google search, browsing, vision, and text-reading abilities. Uses headless Chromium via Playwright for search, Google Lens for image identification, and RapidOCR for local text extraction. No Google API key, no Custom Search Engine setup, no usage limits - just real Google results.
+An MCP (Model Context Protocol) server that gives your local LLM real Google search, browsing, vision, text-reading, and video understanding abilities. Uses headless Chromium via Playwright for search, Google Lens for image identification, RapidOCR for local text extraction, and faster-whisper for video transcription with timestamps. No Google API key, no Custom Search Engine setup, no usage limits - just real Google results.
 
 Works with LM Studio, Claude Desktop, and any MCP-compatible client.
 
@@ -34,6 +34,8 @@ Works with LM Studio, Claude Desktop, and any MCP-compatible client.
 | Google Lens | Built-in (reverse image search) | Not available |
 | Object detection | Built-in (OpenCV + Google Lens per object) | Not available |
 | Local OCR | Built-in (RapidOCR, works offline) | Not available |
+| Video transcription | Built-in (faster-whisper, local) | Not available |
+| Video clip extraction | Built-in (extract segments by timestamp) | Not available |
 | Google Trends | Built-in | Separate API needed |
 | Page fetching | Built-in `visit_page` tool | Usually separate |
 
@@ -269,6 +271,50 @@ NVIDIA GB10  On  00000000F:01:00.0
 
 ---
 
+### `transcribe_video` - Video Transcription
+
+Download and transcribe YouTube videos (or any video URL) locally with timestamps using faster-whisper. The LLM can then answer questions about the video, point to specific timestamps, and identify when topics start and end.
+
+**Parameters:**
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `url` | YouTube URL or any video URL (required) | `"https://youtube.com/watch?v=..."` |
+| `model_size` | Whisper model: tiny/base/small/medium/large (default: base) | `"small"` |
+| `language` | Language code, auto-detected if empty | `"en"` |
+
+**Example output:**
+```
+Video Transcript
+Title: How to Build a Home Server
+Channel: TechChannel
+Duration: 15:30
+Language: en (confidence: 98%)
+
+--- Transcript ---
+[0:00 - 0:05] Welcome back to the channel.
+[0:05 - 0:12] Today we're going to build a home server from scratch.
+[0:12 - 0:25] First, let's talk about the hardware you'll need...
+```
+
+---
+
+### `extract_video_clip` - Video Clip Extraction
+
+Extract a segment from a YouTube video or local video file by timestamps. Adds a configurable buffer before and after to avoid cutting off content. Clips are saved to `~/clips/`.
+
+Use after `transcribe_video` to cut out specific segments about topics of interest.
+
+**Parameters:**
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `url` | YouTube URL or local video file path (required) | `"https://youtube.com/watch?v=..."` |
+| `start_seconds` | Start time in seconds (required) | `150` (for 2:30) |
+| `end_seconds` | End time in seconds (required) | `315` (for 5:15) |
+| `buffer_seconds` | Extra seconds before/after (default: 3) | `5.0` |
+| `output_filename` | Custom filename without extension (optional) | `"hardware_overview"` |
+
+---
+
 ### `list_images` - Image Discovery
 
 List image files in a directory so text-only models can discover and pass them to `google_lens`, `google_lens_detect`, or `ocr_image`. Default directory: `~/lens/`.
@@ -421,6 +467,21 @@ Here are example prompts you can type into LM Studio or Claude Desktop, and whic
 | *"OCR this document: /home/user/receipt.jpg"* | `ocr_image` |
 | *"What does this label say? /home/user/photo.jpg"* | `ocr_image` |
 | *"Extract text from /home/user/document.png"* | `ocr_image` |
+
+### Video Transcription
+| What you type | Tool called |
+|--------------|-------------|
+| *"Transcribe this video: https://youtube.com/watch?v=..."* | `transcribe_video` |
+| *"What do they discuss in this video? https://..."* | `transcribe_video` |
+| *"Summarize this YouTube video: https://..."* | `transcribe_video` |
+| *"At what timestamp do they talk about X in this video?"* | `transcribe_video` |
+
+### Video Clip Extraction
+| What you type | Tool called |
+|--------------|-------------|
+| *"Extract the part about hardware (2:30 to 5:15) from the video"* | `extract_video_clip` |
+| *"Cut the intro section (0:00 to 1:30) and save it"* | `extract_video_clip` |
+| *"Save the segment where they discuss pricing"* | `extract_video_clip` |
 
 ### Page Reading
 | What you type | Tool called |
