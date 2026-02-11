@@ -1,5 +1,7 @@
 # noapi-google-search-mcp
 
+vincentkaufmann@protonmail.com
+
 **Give any LLM real Google search and vision capabilities. No API key, no vision model needed.**
 
 **Google Search, Google Lens + OpenCV object detection for Local LLMs**
