@@ -1,8 +1,10 @@
 # noapi-google-search-mcp
 
-**Google Search for Local LLMs - NoAPI Key Required**
+**Give any text-only LLM vision capabilities using Google Lens + OpenCV object detection. No vision model needed.**
 
-An MCP (Model Context Protocol) server that gives your local LLM real Google search and browsing abilities using headless Chromium via Playwright. No Google API key, no Custom Search Engine setup, no usage limits - justreal Google results.
+**Google Search for Local LLMs - No API Key Required**
+
+An MCP (Model Context Protocol) server that gives your local LLM real Google search, browsing, and vision abilities using headless Chromium via Playwright. No Google API key, no Custom Search Engine setup, no usage limits - just real Google results.
 
 Works with LM Studio, Claude Desktop, and any MCP-compatible client.
 
