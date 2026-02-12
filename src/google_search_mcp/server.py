@@ -269,7 +269,7 @@ async def google_search(
 # google_news
 # ---------------------------------------------------------------------------
 
-async def _do_google_news(query: str, num_results: int = 5) -> str:
+async def _do_google_news(query: str, num_results: int = 5) -> list:
     """Launch headless Chromium, search Google News, and scrape results."""
     encoded_query = quote_plus(query)
     url = f"https://www.google.com/search?q={encoded_query}&hl=en&tbm=nws&num={num_results + 5}"
@@ -296,12 +296,23 @@ async def _do_google_news(query: str, num_results: int = 5) -> str:
                         const timeEl = el.querySelector('.OSrXXb, .WG9SHc, .ZE0LJd span, time, [datetime]');
                         const snippetEl = el.querySelector('.GI74Re, .Y3v8qd, div.VwiC3b');
                         if (linkEl && titleEl) {
+                            // Extract article thumbnail
+                            let thumbnail = '';
+                            const imgs = el.querySelectorAll('img');
+                            for (const img of imgs) {
+                                const s = img.src || img.dataset?.src || '';
+                                if (!s) continue;
+                                if (s.startsWith('data:image') && s.length > 500) { thumbnail = s; break; }
+                                if (s.startsWith('http') && !s.includes('gstatic.com/s/i/')) { thumbnail = s; break; }
+                                if (s.startsWith('//')) { thumbnail = 'https:' + s; break; }
+                            }
                             results.push({
                                 title: titleEl.innerText.trim(),
                                 url: linkEl.href,
                                 source: sourceEl ? sourceEl.innerText.trim() : '',
                                 time: timeEl ? timeEl.innerText.trim() : '',
-                                snippet: snippetEl ? snippetEl.innerText.trim() : ''
+                                snippet: snippetEl ? snippetEl.innerText.trim() : '',
+                                thumbnail: thumbnail,
                             });
                         }
                     }
@@ -328,22 +339,67 @@ async def _do_google_news(query: str, num_results: int = 5) -> str:
             if not results:
                 return f"No news results found for: {query}"
 
-            lines = [f"Google News Results for: {query}\n"]
+            # Download article thumbnail images
+            import base64 as b64mod
+            for r in results[:num_results]:
+                thumb_url = r.get("thumbnail", "")
+                if not thumb_url:
+                    continue
+                if thumb_url.startswith("data:image"):
+                    try:
+                        header, b64data = thumb_url.split(",", 1)
+                        body = b64mod.b64decode(b64data)
+                        if len(body) < 500 or len(body) > 5_000_000:
+                            continue
+                        r["image_bytes"] = body
+                        ct = header.split(";")[0].replace("data:", "")
+                        r["content_type"] = ct or "image/jpeg"
+                    except Exception:
+                        pass
+                    continue
+                if not thumb_url.startswith("http"):
+                    continue
+                try:
+                    resp = await context.request.get(thumb_url, timeout=8000)
+                    if resp.ok:
+                        body = await resp.body()
+                        if len(body) < 1000 or len(body) > 5_000_000:
+                            continue
+                        r["image_bytes"] = body
+                        ct = resp.headers.get("content-type", "image/jpeg")
+                        r["content_type"] = ct.split(";")[0].strip()
+                except Exception:
+                    continue
+
+            # Build mixed content: text + inline images
+            content: list = [f"Google News Results for: {query}\n"]
             for i, r in enumerate(results[:num_results], 1):
-                lines.append(f"{i}. {r['title']}")
-                lines.append(f"   URL: {r['url']}")
+                desc = f"{i}. {r['title']}"
+                desc += f"\n   URL: {r['url']}"
                 source_info = []
                 if r.get("source"):
                     source_info.append(r["source"])
                 if r.get("time"):
                     source_info.append(r["time"])
                 if source_info:
-                    lines.append(f"   Source: {' - '.join(source_info)}")
+                    desc += f"\n   Source: {' - '.join(source_info)}"
                 if r.get("snippet"):
-                    lines.append(f"   {r['snippet']}")
-                lines.append("")
+                    desc += f"\n   {r['snippet']}"
+                content.append(desc)
 
-            return "\n".join(lines)
+                if r.get("image_bytes"):
+                    try:
+                        ct = r.get("content_type", "image/jpeg")
+                        fmt_map = {
+                            "image/jpeg": "jpeg", "image/png": "png",
+                            "image/gif": "gif", "image/webp": "webp",
+                        }
+                        fmt = fmt_map.get(ct, "jpeg")
+                        content.append(Image(data=r["image_bytes"], format=fmt))
+                    except Exception:
+                        pass
+
+            return content
 
         except Exception as e:
             return f"News search failed: {e}"
@@ -353,8 +409,8 @@ async def _do_google_news(query: str, num_results: int = 5) -> str:
 
 
 @mcp.tool()
-async def google_news(query: str, num_results: int = 5) -> str:
-    """Search Google News for recent headlines and articles.
+async def google_news(query: str, num_results: int = 5) -> list:
+    """Search Google News for recent headlines, articles, and article images.
 
     Sample prompts that trigger this tool:
         - "What are the latest AI news?"
@@ -735,103 +791,177 @@ async def google_trends(query: str) -> str:
 # google_maps
 # ---------------------------------------------------------------------------
 
-async def _do_google_maps(query: str, num_results: int = 5) -> str:
-    """Search Google for places using the local pack results."""
+async def _do_google_maps(query: str, num_results: int = 5) -> list:
+    """Search Google Maps for places and return results with a map screenshot."""
     encoded_query = quote_plus(query)
-    # Use Google Search which shows a local pack for place queries
-    url = f"https://www.google.com/search?q={encoded_query}&hl=en"
+    # Navigate directly to Google Maps search (shows map with pins)
+    url = f"https://www.google.com/maps/search/{encoded_query}/?hl=en"
 
     async with async_playwright() as pw:
-        browser, context = await _launch_browser(pw)
+        browser = await pw.chromium.launch(
+            headless=True,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+            ],
+        )
+        context = await browser.new_context(
+            user_agent=USER_AGENT,
+            viewport={"width": 1400, "height": 900},
+            locale="en-US",
+        )
         page = await context.new_page()
 
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=30000)
             await _dismiss_consent(page)
+            # Wait for results panel to appear
             await page.wait_for_timeout(3000)
+            # Wait for the map canvas to render (tiles need time to load)
+            try:
+                await page.wait_for_selector(
+                    "canvas, .widget-scene-canvas", timeout=8000
+                )
+            except Exception:
+                pass
+            # Extra time for map tiles to fully render
+            await page.wait_for_timeout(4000)
 
+            # Extract place data from Google Maps results panel
             results = await page.evaluate(
-                """
+                r"""
                 (numResults) => {
                     const results = [];
+                    const seen = new Set();
 
-                    // Try local pack results (div.VkpGBb or similar)
-                    const localItems = document.querySelectorAll(
-                        '[data-attrid*="local"] .VkpGBb, ' +
-                        '.rllt__details, ' +
-                        '[jscontroller] div[data-index], ' +
-                        '.cXedhc a[data-cid]'
-                    );
+                    // Use div.Nv2PK (the main card container) to avoid
+                    // duplicates from nested a.hfpxzc links.
+                    const cards = document.querySelectorAll('div.Nv2PK');
 
-                    for (const el of localItems) {
+                    for (const card of cards) {
                         if (results.length >= numResults) break;
 
-                        const nameEl = el.querySelector(
-                            '.dbg0pd, .OSrXXb, [role="heading"], .fontHeadlineSmall, span.OSrXXb'
+                        // --- Name ---
+                        const nameEl = card.querySelector(
+                            '.qBF1Pd, .fontHeadlineSmall, [role="heading"]'
                         );
-                        const ratingEl = el.querySelector('.yi40Hd, .MW4etd, span[aria-label*="stars"], span[aria-label*="rated"]');
-                        const reviewsEl = el.querySelector('.RDApEe, .UY7F9, span[aria-label*="reviews"]');
-                        const infoEl = el.querySelector('.rllt__details div:nth-child(2), .W4Efsd');
-                        const addressEl = el.querySelector('.rllt__details div:nth-child(3), .lMbq3e');
+                        let name = nameEl ? nameEl.innerText.trim() : '';
+                        if (!name) {
+                            const link = card.querySelector('a.hfpxzc');
+                            if (link) name = (link.getAttribute('aria-label') || '').trim();
+                        }
+                        if (!name || name.length < 2 || seen.has(name)) continue;
+                        seen.add(name);
 
-                        const name = nameEl ? nameEl.innerText.trim() : '';
-                        if (!name) continue;
-
+                        // --- Rating from selector ---
                         let rating = '';
-                        if (ratingEl) {
-                            rating = ratingEl.innerText.trim() ||
-                                     (ratingEl.getAttribute('aria-label') || '').replace(/[^0-9.]/g, '');
+                        const rEl = card.querySelector('.MW4etd, .yi40Hd');
+                        if (rEl) rating = rEl.innerText.trim();
+
+                        // --- Parse card text lines for all fields ---
+                        // Card text layout:
+                        //   Cantinetta Antinori
+                        //   4.4(2,486) · $$$       ← reviews + price here
+                        //   Italian · (icon) · Augustinergasse 25
+                        //   Seasonal Tuscan cuisine with fine wines
+                        //   Closed · Opens 11:30 am
+                        //   "Review quote..."
+                        const allText = card.innerText || '';
+                        const lines = allText.split('\n').map(s => s.trim())
+                            .filter(s => s && s !== '\xa0');
+
+                        let reviews = '', priceRange = '';
+                        let category = '', address = '';
+                        let description = '', status = '';
+
+                        for (const line of lines) {
+                            if (line === name) continue;
+                            if (line.length <= 2) continue;
+
+                            // Rating line: "4.4(2,486) · $$$" or just "4.6"
+                            if (/^\d\.\d/.test(line)) {
+                                // Reviews in parentheses: (2,486)
+                                const revMatch = line.match(/\(([\d,]+)\)/);
+                                if (revMatch && !reviews) reviews = revMatch[1];
+                                // Price: $, $$, $$$, $$$$
+                                const pm = line.match(/([\$\u0024€£]{1,4})\s*$/);
+                                if (pm && !priceRange) priceRange = pm[1];
+                                if (!priceRange) {
+                                    const pm2 = line.match(/([\$€£]{1,4})/);
+                                    if (pm2) priceRange = pm2[1];
+                                }
+                                // CHF price pattern
+                                if (!priceRange) {
+                                    const chf = line.match(/CHF\s*[\d,.]+/i);
+                                    if (chf) priceRange = chf[0];
+                                }
+                                continue;
+                            }
+
+                            // Status: "Closed · Opens ..." or "Open · Closes ..."
+                            if (/^(Closed|Open\b|Temporarily closed)/i.test(line)) {
+                                status = line;
+                                continue;
+                            }
+
+                            // Quote lines
+                            if (line.startsWith('"') || line.startsWith('\u201c')) continue;
+                            // Action buttons
+                            if (/^(Reserve|Order online|Dine-in|Takeout|Delivery)/i.test(line)) continue;
+
+                            // Category · address line (contains separator)
+                            // "Italian · (icon) · Augustinergasse 25"
+                            if (line.includes('\u00B7') || line.includes('·')) {
+                                if (!category) {
+                                    const segs = line.split(/[·\u00B7]/).map(s => s.trim())
+                                        .filter(s => s && s.length > 1);
+                                    for (const seg of segs) {
+                                        if (/^[\$€£]{1,4}$/.test(seg)) {
+                                            if (!priceRange) priceRange = seg;
+                                        } else if (!category && !/\d/.test(seg) &&
+                                                   seg.length < 50) {
+                                            category = seg;
+                                        } else if (!address && /\d/.test(seg) &&
+                                                   seg.length < 80) {
+                                            address = seg;
+                                        }
+                                    }
+                                }
+                                continue;
+                            }
+
+                            // Description/tagline
+                            if (!description && line.length > 10 &&
+                                line.length < 150 && !/^\d/.test(line)) {
+                                description = line;
+                            }
                         }
 
-                        let reviews = '';
-                        if (reviewsEl) {
-                            reviews = reviewsEl.innerText.trim().replace(/[()]/g, '') ||
-                                      (reviewsEl.getAttribute('aria-label') || '').replace(/[^0-9,]/g, '');
-                        }
+                        // Place URL
+                        let placeUrl = '';
+                        const link = card.querySelector('a.hfpxzc, a[data-item-id]');
+                        if (link && link.href) placeUrl = link.href;
 
                         results.push({
-                            name: name,
-                            rating: rating,
-                            reviews: reviews,
-                            category: infoEl ? infoEl.innerText.trim() : '',
-                            address: addressEl ? addressEl.innerText.trim() : '',
+                            name, rating, reviews, priceRange,
+                            category, address, description, status,
+                            url: placeUrl,
                         });
                     }
 
-                    // Fallback: try to find any place-like results from the page
+                    // Fallback: parse raw text from results panel
                     if (results.length === 0) {
-                        // Look for the map pack container
-                        const mapPack = document.querySelector('.AEprdc, .C8TUKc, [data-attrid="kc:/local:local_pack"]');
-                        if (mapPack) {
-                            const items = mapPack.querySelectorAll('[data-cid], .VkpGBb, div[jsaction]');
-                            for (const item of items) {
-                                if (results.length >= numResults) break;
-                                const text = item.innerText.trim();
-                                if (text && text.length > 3 && text.length < 500) {
-                                    // Parse the text block
-                                    const lines = text.split('\\n').filter(l => l.trim());
-                                    if (lines.length >= 1) {
-                                        results.push({
-                                            name: lines[0],
-                                            rating: '',
-                                            reviews: '',
-                                            category: lines.length > 1 ? lines[1] : '',
-                                            address: lines.length > 2 ? lines[2] : '',
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Last resort: get text from any local results section
-                    if (results.length === 0) {
-                        const allText = document.querySelector('.rlfl__tls, .AEprdc, [data-async-type="localPack"]');
-                        if (allText) {
+                        const panel = document.querySelector(
+                            '[role="feed"], [role="main"], .m6QErb'
+                        );
+                        if (panel) {
                             return [{
                                 name: '__raw__',
-                                raw_text: allText.innerText.substring(0, 2000),
-                                rating: '', reviews: '', category: '', address: ''
+                                raw_text: panel.innerText.substring(0, 3000),
+                                rating: '', reviews: '', category: '',
+                                priceRange: '', address: '', description: '',
+                                status: '', url: ''
                             }];
                         }
                     }
@@ -842,49 +972,58 @@ async def _do_google_maps(query: str, num_results: int = 5) -> str:
                 num_results,
             )
 
-            # Deduplicate by name
-            seen_names = set()
-            deduped = []
-            for r in results:
-                if r.get("name") not in seen_names:
-                    seen_names.add(r.get("name"))
-                    deduped.append(r)
-            results = deduped
-
+            # Take a viewport screenshot showing the map with pins
+            screenshot_bytes = await page.screenshot(full_page=False, type="png")
             if not results:
-                return f"No map results found for: {query}"
+                content = [f"Google Maps Results for: {query}\n\nNo places found."]
+                content.append(Image(data=screenshot_bytes, format="png"))
+                return content
 
             # Handle raw text fallback
             if len(results) == 1 and results[0].get("name") == "__raw__":
                 raw = results[0].get("raw_text", "")
-                return f"Google Maps Results for: {query}\n\n{raw}"
+                content = [f"Google Maps Results for: {query}\n\n{raw}"]
+                content.append(Image(data=screenshot_bytes, format="png"))
+                return content
 
-            lines = [f"Google Maps Results for: {query}\n"]
+            # Build mixed content: text descriptions first, then map screenshot
+            content: list = [f"Google Maps Results for: {query}\n"]
             for i, r in enumerate(results[:num_results], 1):
-                lines.append(f"{i}. {r['name']}")
+                desc = f"{i}. {r['name']}"
                 if r.get("rating"):
                     rating_str = f"   Rating: {r['rating']}"
                     if r.get("reviews"):
                         rating_str += f" ({r['reviews']} reviews)"
-                    lines.append(rating_str)
+                    desc += f"\n{rating_str}"
+                if r.get("priceRange"):
+                    desc += f"\n   Price: {r['priceRange']}"
                 if r.get("category"):
-                    lines.append(f"   Type: {r['category']}")
+                    desc += f"\n   Type: {r['category']}"
                 if r.get("address"):
-                    lines.append(f"   Address: {r['address']}")
-                lines.append("")
+                    desc += f"\n   Address: {r['address']}"
+                if r.get("description"):
+                    desc += f"\n   Note: {r['description']}"
+                if r.get("status"):
+                    desc += f"\n   Hours: {r['status']}"
+                if r.get("url"):
+                    desc += f"\n   Link: {r['url']}"
+                content.append(desc)
 
-            return "\n".join(lines)
+            # Map screenshot at the end (shows all pins)
+            content.append(Image(data=screenshot_bytes, format="png"))
+
+            return content
 
         except Exception as e:
-            return f"Maps search failed: {e}"
+            return [f"Maps search failed: {e}"]
 
         finally:
             await browser.close()
 
 
 @mcp.tool()
-async def google_maps(query: str, num_results: int = 5) -> str:
-    """Search Google Maps for places, restaurants, businesses, and locations with ratings and addresses.
+async def google_maps(query: str, num_results: int = 5) -> list:
+    """Search Google Maps for places, restaurants, businesses, and locations with ratings, prices, addresses, and a map screenshot showing pinned locations.
 
     Sample prompts that trigger this tool:
         - "Find Italian restaurants near Times Square"
@@ -1408,7 +1547,7 @@ async def google_weather(location: str) -> str:
 # google_shopping
 # ---------------------------------------------------------------------------
 
-async def _do_google_shopping(query: str, num_results: int = 5) -> str:
+async def _do_google_shopping(query: str, num_results: int = 5) -> list:
     """Search Google Shopping for products and prices."""
     encoded_query = quote_plus(query)
     url = f"https://www.google.com/search?q={encoded_query}&hl=en&tbm=shop&num={num_results + 5}"
@@ -1440,18 +1579,78 @@ async def _do_google_shopping(query: str, num_results: int = 5) -> str:
                         const titleEl = el.querySelector('h3, h4, .tAxDx, .Xjkr3b, .EI11Pd');
                         const priceEl = el.querySelector('.a8Pemb, .HRLxBb, .kHxwFf, .T14wmb, b');
                         const storeEl = el.querySelector('.aULzUe, .IuHnof, .E5ocAb, .dD8iuc');
-                        const linkEl = el.querySelector('a[href]');
                         const ratingEl = el.querySelector('.Rsc7Yb, .QIrs8, .yi40Hd');
 
                         const title = titleEl ? titleEl.innerText.trim() : '';
                         if (!title) continue;
+
+                        // Extract clean product URL from Google redirect wrappers
+                        let productUrl = '';
+                        // 1. Check data-merchant-url attribute on links
+                        const merchantLink = el.querySelector('a[data-merchant-url]');
+                        if (merchantLink) {
+                            productUrl = merchantLink.getAttribute('data-merchant-url');
+                        }
+                        if (!productUrl) {
+                            // 2. Try links with url?q= redirect pattern
+                            const redirectLink = el.querySelector('a[href*="/url?"]');
+                            if (redirectLink) {
+                                try {
+                                    const u = new URL(redirectLink.href);
+                                    productUrl = u.searchParams.get('q') || u.searchParams.get('url') || '';
+                                } catch(e) {}
+                            }
+                        }
+                        if (!productUrl) {
+                            // 3. Try links with aclk (Google Ads click tracker)
+                            //    Extract adurl param which contains the real destination
+                            const aclkLink = el.querySelector('a[href*="aclk?"]');
+                            if (aclkLink) {
+                                try {
+                                    const u = new URL(aclkLink.href);
+                                    productUrl = u.searchParams.get('adurl') || '';
+                                } catch(e) {}
+                            }
+                        }
+                        if (!productUrl) {
+                            // 4. Fallback: any link with an external href
+                            const allLinks = el.querySelectorAll('a[href]');
+                            for (const a of allLinks) {
+                                const h = a.href;
+                                if (h && h.startsWith('http') &&
+                                    !h.includes('google.com/aclk') &&
+                                    !h.includes('google.com/url') &&
+                                    !h.includes('google.com/search') &&
+                                    !h.includes('google.com/shopping')) {
+                                    productUrl = h;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!productUrl) {
+                            // 5. Last resort: use raw href
+                            const linkEl = el.querySelector('a[href]');
+                            productUrl = linkEl ? linkEl.href : '';
+                        }
+
+                        // Extract product thumbnail
+                        let thumbnail = '';
+                        const imgs = el.querySelectorAll('img');
+                        for (const img of imgs) {
+                            const s = img.src || img.dataset?.src || '';
+                            if (!s) continue;
+                            if (s.startsWith('data:image') && s.length > 500) { thumbnail = s; break; }
+                            if (s.startsWith('http') && !s.includes('gstatic.com/s/i/')) { thumbnail = s; break; }
+                            if (s.startsWith('//')) { thumbnail = 'https:' + s; break; }
+                        }
 
                         results.push({
                             title: title,
                             price: priceEl ? priceEl.innerText.trim() : '',
                             store: storeEl ? storeEl.innerText.trim() : '',
                             rating: ratingEl ? ratingEl.innerText.trim() : '',
-                            url: linkEl ? linkEl.href : '',
+                            url: productUrl,
+                            thumbnail: thumbnail,
                         });
                     }
 
@@ -1486,22 +1685,67 @@ async def _do_google_shopping(query: str, num_results: int = 5) -> str:
             if len(results) == 1 and results[0].get("title") == "__raw__":
                 raw = results[0].get("raw_text", "")
                 raw = re.sub(r'\n{3,}', '\n\n', raw).strip()
-                return f"Google Shopping Results for: {query}\n\n{raw}"
+                return [f"Google Shopping Results for: {query}\n\n{raw}"]
 
-            lines = [f"Google Shopping Results for: {query}\n"]
+            # Download product thumbnail images
+            import base64 as b64mod
+            for r in results[:num_results]:
+                thumb_url = r.get("thumbnail", "")
+                if not thumb_url:
+                    continue
+                if thumb_url.startswith("data:image"):
+                    try:
+                        header, b64data = thumb_url.split(",", 1)
+                        body = b64mod.b64decode(b64data)
+                        if len(body) < 500 or len(body) > 5_000_000:
+                            continue
+                        r["image_bytes"] = body
+                        ct = header.split(";")[0].replace("data:", "")
+                        r["content_type"] = ct or "image/jpeg"
+                    except Exception:
+                        pass
+                    continue
+                if not thumb_url.startswith("http"):
+                    continue
+                try:
+                    resp = await context.request.get(thumb_url, timeout=8000)
+                    if resp.ok:
+                        body = await resp.body()
+                        if len(body) < 1000 or len(body) > 5_000_000:
+                            continue
+                        r["image_bytes"] = body
+                        ct = resp.headers.get("content-type", "image/jpeg")
+                        r["content_type"] = ct.split(";")[0].strip()
+                except Exception:
+                    continue
+
+            # Build mixed content: text + inline images
+            content: list = [f"Google Shopping Results for: {query}\n"]
             for i, r in enumerate(results[:num_results], 1):
-                lines.append(f"{i}. {r['title']}")
+                desc = f"{i}. {r['title']}"
                 if r.get("price"):
-                    lines.append(f"   Price: {r['price']}")
+                    desc += f"\n   Price: {r['price']}"
                 if r.get("store"):
-                    lines.append(f"   Store: {r['store']}")
+                    desc += f"\n   Store: {r['store']}"
                 if r.get("rating"):
-                    lines.append(f"   Rating: {r['rating']}")
+                    desc += f"\n   Rating: {r['rating']}"
                 if r.get("url"):
-                    lines.append(f"   URL: {r['url']}")
-                lines.append("")
+                    desc += f"\n   URL: {r['url']}"
+                content.append(desc)
 
-            return "\n".join(lines)
+                if r.get("image_bytes"):
+                    try:
+                        ct = r.get("content_type", "image/jpeg")
+                        fmt_map = {
+                            "image/jpeg": "jpeg", "image/png": "png",
+                            "image/gif": "gif", "image/webp": "webp",
+                        }
+                        fmt = fmt_map.get(ct, "jpeg")
+                        content.append(Image(data=r["image_bytes"], format=fmt))
+                    except Exception:
+                        pass
+
+            return content
 
         except Exception as e:
             return f"Shopping search failed: {e}"
@@ -1511,8 +1755,8 @@ async def _do_google_shopping(query: str, num_results: int = 5) -> str:
 
 
 @mcp.tool()
-async def google_shopping(query: str, num_results: int = 5) -> str:
-    """Search Google Shopping for products with prices, stores, and ratings.
+async def google_shopping(query: str, num_results: int = 5) -> list:
+    """Search Google Shopping for products with prices, stores, ratings, and product images.
 
     Sample prompts that trigger this tool:
         - "Find the cheapest MacBook Air"
@@ -1587,7 +1831,40 @@ async def _do_google_books(query: str, num_results: int = 5) -> str:
                             }
                         }
 
-                        results.push({ title, url, author, snippet });
+                        // Extract ISBN from container text or URL
+                        let isbn = '';
+                        const containerText = container.innerText || '';
+                        const containerHtml = container.innerHTML || '';
+                        const searchText = containerText + ' ' + containerHtml;
+                        // ISBN-13 with optional hyphens (starts with 978 or 979)
+                        const isbn13Match = searchText.match(/97[89][\d-]{10,16}/);
+                        if (isbn13Match) {
+                            isbn = isbn13Match[0].replace(/-/g, '');
+                            if (isbn.length !== 13) isbn = '';  // validate length
+                        }
+                        // ISBN-10 with optional hyphens
+                        if (!isbn) {
+                            const isbn10Match = searchText.match(/ISBN[:\s]*([\d][\d\-]{8,12}[\dXx])/i);
+                            if (isbn10Match) {
+                                const cleaned = isbn10Match[1].replace(/-/g, '');
+                                if (cleaned.length === 10 || cleaned.length === 13) isbn = cleaned;
+                            }
+                        }
+                        // Also check the URL for ISBN param
+                        if (!isbn && url) {
+                            try {
+                                const u = new URL(url);
+                                const vid = u.searchParams.get('vid') || '';
+                                const isbnFromVid = vid.match(/ISBN[:\s]*([\d-]{10,17})/i);
+                                if (isbnFromVid) isbn = isbnFromVid[1].replace(/-/g, '');
+                                if (!isbn) {
+                                    const isbnFromUrl = url.match(/isbn[=:]([\d-]{10,17})/i);
+                                    if (isbnFromUrl) isbn = isbnFromUrl[1].replace(/-/g, '');
+                                }
+                            } catch(e) {}
+                        }
+
+                        results.push({ title, url, author, snippet, isbn });
                     }
                     return results;
                 }
@@ -1603,6 +1880,8 @@ async def _do_google_books(query: str, num_results: int = 5) -> str:
                 lines.append(f"{i}. {r['title']}")
                 if r.get("author"):
                     lines.append(f"   Author: {r['author']}")
+                if r.get("isbn"):
+                    lines.append(f"   ISBN: {r['isbn']}")
                 if r.get("url"):
                     lines.append(f"   URL: {r['url']}")
                 if r.get("snippet"):
@@ -1890,7 +2169,7 @@ async def google_flights(
 # google_hotels
 # ---------------------------------------------------------------------------
 
-async def _do_google_hotels(query: str, num_results: int = 5) -> str:
+async def _do_google_hotels(query: str, num_results: int = 5) -> list:
     """Search Google for hotel information."""
     encoded_query = quote_plus(f"hotels {query}")
     url = f"https://www.google.com/search?q={encoded_query}&hl=en"
@@ -1905,36 +2184,100 @@ async def _do_google_hotels(query: str, num_results: int = 5) -> str:
             await page.wait_for_timeout(3000)
 
             data = await page.evaluate(
-                """
+                r"""
                 (numResults) => {
                     const data = { hotels: [] };
 
-                    // Hotel cards in search results
-                    const hotelCards = document.querySelectorAll(
-                        '.BTPx6e, ' +
-                        '[data-attrid*="hotel"] .kp-blk, ' +
-                        '.X7NTVe, ' +
-                        '.ntKMYc'
-                    );
+                    // Strategy: .BTPx6e elements ARE the hotel name elements.
+                    // Walk up to the row container to find price/rating/link/image.
+                    // Images are in sibling elements with class "uhHOwf".
+                    const nameEls = document.querySelectorAll('.BTPx6e');
 
-                    for (const card of hotelCards) {
+                    // Collect hotel thumbnail images separately — they sit in
+                    // .uhHOwf containers as siblings/cousins of the name elements.
+                    // Pair them with hotels by index.
+                    const thumbImgs = document.querySelectorAll('.uhHOwf img, .taJbee img');
+                    const thumbSrcs = [];
+                    for (const img of thumbImgs) {
+                        const src = img.src || img.dataset?.src || '';
+                        if (src && !thumbSrcs.includes(src)) thumbSrcs.push(src);
+                    }
+
+                    for (const nameEl of nameEls) {
                         if (data.hotels.length >= numResults) break;
 
-                        const nameEl = card.querySelector('.BTPx6e .rOVRL, h3, .GgpMEf, [data-hotel-id] .QrShPb');
-                        const priceEl = card.querySelector('.kixHKb, .qeiSWe, .priceText, .hVE8ee');
-                        const ratingEl = card.querySelector('.KFi5wf, .MW4etd, .yi40Hd');
-                        const reviewsEl = card.querySelector('.jdzyld, .RDApEe');
-                        const linkEl = card.querySelector('a[href]');
+                        const name = nameEl.innerText.trim();
+                        if (!name || name.length < 2) continue;
 
-                        const name = nameEl ? nameEl.innerText.trim() : '';
-                        if (!name) continue;
+                        // Walk up to find the row container (up to 6 levels)
+                        let row = nameEl;
+                        for (let i = 0; i < 6; i++) {
+                            if (!row.parentElement) break;
+                            row = row.parentElement;
+                            // Stop when we find a container with a link or price
+                            if (row.querySelector('a[href]') && row.querySelector('a[href]') !== nameEl) break;
+                        }
+
+                        // Extract price — look in the row and siblings
+                        let price = '';
+                        const priceEl = row.querySelector('.kixHKb, .qeiSWe, .priceText, .hVE8ee');
+                        if (priceEl) {
+                            price = priceEl.innerText.trim();
+                        } else {
+                            // Search row text for price pattern
+                            const rowText = row.innerText || '';
+                            const priceMatch = rowText.match(/(?:CHF|USD|\$|€|£)\s*[\d,.]+/i)
+                                || rowText.match(/[\d,.]+\s*(?:CHF|USD|EUR|per night)/i);
+                            if (priceMatch) price = priceMatch[0].trim();
+                        }
+
+                        // Extract rating
+                        let rating = '';
+                        const ratingEl = row.querySelector('.KFi5wf, .MW4etd, .yi40Hd');
+                        if (ratingEl) rating = ratingEl.innerText.trim();
+
+                        // Extract reviews
+                        let reviews = '';
+                        const reviewsEl = row.querySelector('.jdzyld, .RDApEe');
+                        if (reviewsEl) reviews = reviewsEl.innerText.trim().replace(/[()]/g, '');
+
+                        // Extract link
+                        const bookLink = row.querySelector(
+                            'a[href*="hotel"], a[href*="book"], a[href*="travel"], a[href*="maps"]'
+                        );
+                        const linkEl = bookLink || row.querySelector('a[href]');
+                        let linkUrl = linkEl ? linkEl.href : '';
+                        if (linkUrl.includes('/url?') || linkUrl.includes('google.com/url')) {
+                            try {
+                                const u = new URL(linkUrl);
+                                linkUrl = u.searchParams.get('q') || u.searchParams.get('url') || linkUrl;
+                            } catch(e) {}
+                        }
+
+                        // Image: try within the row first, then pair by index
+                        let thumbnail = '';
+                        // Check row for images
+                        const rowImgs = row.querySelectorAll('img');
+                        for (const img of rowImgs) {
+                            const s = img.src || img.dataset?.src || '';
+                            if (!s) continue;
+                            if (s.startsWith('data:image') && s.length > 500) { thumbnail = s; break; }
+                            if (s.startsWith('http') && !s.includes('gstatic.com/s/i/')) { thumbnail = s; break; }
+                            // Protocol-relative URLs
+                            if (s.startsWith('//')) { thumbnail = 'https:' + s; break; }
+                        }
+                        // Fallback: pair by index from the collected thumbnails
+                        if (!thumbnail) {
+                            const idx = data.hotels.length;
+                            if (idx < thumbSrcs.length) {
+                                let s = thumbSrcs[idx];
+                                if (s.startsWith('//')) s = 'https:' + s;
+                                thumbnail = s;
+                            }
+                        }
 
                         data.hotels.push({
-                            name: name,
-                            price: priceEl ? priceEl.innerText.trim() : '',
-                            rating: ratingEl ? ratingEl.innerText.trim() : '',
-                            reviews: reviewsEl ? reviewsEl.innerText.trim().replace(/[()]/g, '') : '',
-                            url: linkEl ? linkEl.href : '',
+                            name, price, rating, reviews, url: linkUrl, thumbnail,
                         });
                     }
 
@@ -1961,37 +2304,86 @@ async def _do_google_hotels(query: str, num_results: int = 5) -> str:
                 num_results,
             )
 
-            lines = [f"Google Hotels: {query}\n"]
+            # Download thumbnail images for inline display
+            import base64 as b64mod
+            if data.get("hotels"):
+                for h in data["hotels"][:num_results]:
+                    thumb_url = h.get("thumbnail", "")
+                    if not thumb_url:
+                        continue
+                    # Handle base64 data URIs from inline images
+                    if thumb_url.startswith("data:image"):
+                        try:
+                            # data:image/jpeg;base64,/9j/4AAQ...
+                            header, b64data = thumb_url.split(",", 1)
+                            body = b64mod.b64decode(b64data)
+                            if len(body) < 500 or len(body) > 5_000_000:
+                                continue
+                            h["image_bytes"] = body
+                            ct = header.split(";")[0].replace("data:", "")
+                            h["content_type"] = ct or "image/jpeg"
+                        except Exception:
+                            pass
+                        continue
+                    # Download HTTP URLs
+                    if not thumb_url.startswith("http"):
+                        continue
+                    try:
+                        resp = await context.request.get(thumb_url, timeout=8000)
+                        if resp.ok:
+                            body = await resp.body()
+                            if len(body) < 1000 or len(body) > 5_000_000:
+                                continue
+                            h["image_bytes"] = body
+                            ct = resp.headers.get("content-type", "image/jpeg")
+                            h["content_type"] = ct.split(";")[0].strip()
+                    except Exception:
+                        continue
+
+            # Build mixed content: text descriptions + inline images
+            content: list = [f"Google Hotels: {query}\n"]
             has_data = False
 
             if data.get("hotels"):
                 for i, h in enumerate(data["hotels"][:num_results], 1):
-                    lines.append(f"{i}. {h['name']}")
+                    desc = f"{i}. {h['name']}"
                     if h.get("price"):
-                        lines.append(f"   Price: {h['price']}")
+                        desc += f"\n   Price: {h['price']}"
                     if h.get("rating"):
                         rating_str = f"   Rating: {h['rating']}"
                         if h.get("reviews"):
                             rating_str += f" ({h['reviews']} reviews)"
-                        lines.append(rating_str)
+                        desc += f"\n{rating_str}"
                     if h.get("url"):
-                        lines.append(f"   URL: {h['url']}")
-                    lines.append("")
+                        desc += f"\n   URL: {h['url']}"
+                    content.append(desc)
+
+                    if h.get("image_bytes"):
+                        try:
+                            ct = h.get("content_type", "image/jpeg")
+                            fmt_map = {
+                                "image/jpeg": "jpeg", "image/png": "png",
+                                "image/gif": "gif", "image/webp": "webp",
+                            }
+                            fmt = fmt_map.get(ct, "jpeg")
+                            content.append(Image(data=h["image_bytes"], format=fmt))
+                        except Exception:
+                            pass
                 has_data = True
 
             if data.get("widget_text") and not has_data:
                 text = re.sub(r'\n{3,}', '\n\n', data["widget_text"]).strip()
-                lines.append(text)
+                content.append(text)
                 has_data = True
 
             if data.get("hotels_url"):
-                lines.append(f"\nView all hotels: {data['hotels_url']}")
+                content.append(f"\nView all hotels: {data['hotels_url']}")
 
             if not has_data and not data.get("hotels_url"):
-                lines.append("No hotel data found. Try searching directly:")
-                lines.append("https://www.google.com/travel/hotels")
+                content.append("No hotel data found. Try searching directly:")
+                content.append("https://www.google.com/travel/hotels")
 
-            return "\n".join(lines)
+            return content
 
         except Exception as e:
             return f"Hotel search failed: {e}"
@@ -2001,8 +2393,8 @@ async def _do_google_hotels(query: str, num_results: int = 5) -> str:
 
 
 @mcp.tool()
-async def google_hotels(query: str, num_results: int = 5) -> str:
-    """Search for hotels and accommodation with prices and ratings.
+async def google_hotels(query: str, num_results: int = 5) -> list:
+    """Search for hotels and accommodation with thumbnail images, prices, ratings, and booking URLs.
 
     Sample prompts that trigger this tool:
         - "Find hotels in Paris for next weekend"

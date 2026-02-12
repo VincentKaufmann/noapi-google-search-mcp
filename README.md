@@ -71,7 +71,7 @@ Search Google Shopping for products with prices, stores, and ratings.
 | `query` | Product search query (required) | `"Sony WH-1000XM5"` |
 | `num_results` | Number of results (1-10, default 5) | `5` |
 
-Returns: product name, price, store, and rating.
+Returns: product name, price, store, rating, and URL.
 
 ---
 
@@ -93,7 +93,7 @@ Search Google Flights for flight options, prices, and travel times.
 
 ### `google_hotels` - Hotel Search
 
-Search for hotels and accommodation with prices and ratings.
+Search for hotels and accommodation with thumbnail images, prices, ratings, and booking URLs.
 
 **Parameters:**
 | Parameter | Description | Example |
@@ -118,15 +118,19 @@ Translate text between languages using Google Translate.
 
 ---
 
-### `google_maps` - Places Search
+### `google_maps` - Places Search with Map Screenshot
 
-Search Google Maps for restaurants, businesses, and places with ratings, addresses, and reviews.
+Search Google Maps for restaurants, businesses, and places with ratings, prices, addresses, and reviews. Returns an inline map screenshot showing all pinned locations.
 
 **Parameters:**
 | Parameter | Description | Example |
 |-----------|-------------|---------|
 | `query` | Place search query (required) | `"pizza near Central Park"` |
 | `num_results` | Number of results (1-10, default 5) | `5` |
+
+Returns: place names, ratings, price range, addresses, descriptions, opening hours, Google Maps links, and a map screenshot with pinned locations.
+
+![Google Maps Places Search](images/google_maps_places.png)
 
 ---
 
@@ -212,6 +216,8 @@ Search Google Books for books, textbooks, and publications.
 |-----------|-------------|---------|
 | `query` | Book search query (required) | `"machine learning"` |
 | `num_results` | Number of results (1-10, default 5) | `5` |
+
+Returns: title, author, ISBN (when available), URL, and snippet.
 
 ---
 
