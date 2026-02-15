@@ -4,7 +4,7 @@ vincentkaufmann@protonmail.com
 
 > <img src="images/btc-donate-qr.jpeg" alt="BTC" width="80" align="left" style="margin-right:12px"> If you find this useful, consider supporting continued development and new features.<br>**BTC:** `16DT4AHemLyn7C6P116YepjY518gu9wUUH`<br clear="all">
 
-**Give any LLM real Google search, vision, local OCR, and YouTube video understanding. No API key, no vision model needed.**
+**Give any LLM real Google search, vision, local OCR, and YouTube or local video RAG / understanding. No API key, no vision model needed.**
 
 **Google Search, Google Lens + OpenCV object detection + local OCR + YouTube transcription, Q&A & clip extraction by topic for Local LLMs**
 
