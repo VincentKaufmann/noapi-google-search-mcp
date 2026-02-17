@@ -189,6 +189,36 @@ Pull emails, generate QR codes, shorten URLs, archive pages, look up Wikipedia, 
 
 ---
 
+## Supported File Formats
+
+### Documents (`read_document`)
+| Category | Formats |
+|----------|---------|
+| Documents | PDF (with OCR fallback for scanned pages), DOCX |
+| Web | HTML, HTM |
+| Data | CSV, JSON, XML, YAML, YML, TOML |
+| Text | TXT, MD, LOG |
+| Config | INI, CFG, CONF, ENV |
+| Code | PY, JS, TS, GO, RS, C, CPP, H, JAVA, KT, RB, SQL, R, M, SWIFT |
+| Shell | SH, BASH, ZSH |
+
+### Audio & Video (`transcribe_local`, `transcribe_video`, `convert_media`)
+| Category | Formats |
+|----------|---------|
+| Audio | MP3, WAV, M4A, FLAC, OGG, AAC, WMA, OPUS |
+| Video | MP4, MKV, WEBM, AVI, MOV |
+| Special | GIF (video-to-GIF output) |
+| Input | Any format FFmpeg can decode (hundreds of formats) |
+
+### Images (`google_lens`, `google_lens_detect`, `ocr_image`, `list_images`)
+| Category | Formats |
+|----------|---------|
+| Standard | JPG, JPEG, PNG, GIF, BMP, WEBP |
+| Professional | TIFF, TIF, SVG |
+| Input methods | Local file path, public URL, base64 (drag-and-drop into chat) |
+
+---
+
 ## Why This Instead of API-Based Alternatives?
 
 | | **noapi-google-search-mcp** | API-based MCP servers | OpenClaw built-in |
