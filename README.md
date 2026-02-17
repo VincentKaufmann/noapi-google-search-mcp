@@ -42,6 +42,24 @@ Subscribe to news, Reddit, Hacker News, YouTube channels, Twitter/X profiles, Gi
 "What's new in my Reddit feeds?"
 ```
 
+### YouTube RAG — Subscribe, Transcribe, Search
+
+A full retrieval-augmented pipeline for YouTube. Subscribe to any channel, and when you check feeds the server automatically downloads the audio, transcribes it with Whisper, and stores the full transcript in SQLite with FTS5 full-text search. Every word from every video becomes searchable — ask your LLM a question and it pulls the answer from the right video.
+
+**How it works:**
+1. `subscribe` to a YouTube channel — by handle (`@3Blue1Brown`), URL, or channel ID
+2. `check_feeds` — new videos are fetched and **auto-transcribed** locally with faster-whisper. Transcripts are written into the database for instant search. Up to 5 videos per check, cached so nothing gets re-downloaded.
+3. `search_feeds` — full-text search across all transcripts. Supports AND, OR, NOT, and quoted phrases. Your LLM finds the exact video and passage that answers your question.
+
+```
+"Subscribe to @AndrejKarpathy on YouTube"
+"Check my feeds"
+"Search my feeds for backpropagation explained"
+"What did Karpathy say about tokenization?"
+```
+
+No embeddings, no vector database, no API — just Whisper + SQLite FTS5 running on your machine.
+
 ### Local File Processing
 Transcribe meetings, convert formats, read documents — all local, no cloud.
 
