@@ -2,6 +2,8 @@
 
 vincentkaufmann@protonmail.com
 
+If you want to support noapi-google-mcp or gpt-oss-20B/120B-Vision and other open source models in the pipeline please add to my GPU compute fund: around $3000 are needed.
+
 > <img src="images/btc-donate-qr.jpeg" alt="BTC" width="80" align="left" style="margin-right:12px"> If you find this useful, consider supporting continued development and new features.<br>**BTC:** `16DT4AHemLyn7C6P116YepjY518gu9wUUH`<br clear="all">
 > <img src="images/eth-donate-qr.png" alt="ETH" width="80" align="left" style="margin-right:12px"> **ETH:** `0x7287D1F9c77832cFF246937af0443622bFdACD04`<br clear="all">
 
