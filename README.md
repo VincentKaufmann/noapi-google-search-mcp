@@ -15,6 +15,29 @@ Works with **LM Studio**, **Claude Desktop**, **OpenClaw**, **Ollama**, and any 
 
 ---
 
+## What's New in v0.3.1 — Anti-Bot Detection & Neural Net CAPTCHA Solver
+
+Google started catching headless Chromium browsers and serving CAPTCHAs instead of search results ([#2](https://github.com/VincentKaufmann/noapi-google-search-mcp/issues/2)). Fixed it properly and then added a neural net CAPTCHA solver just for the hell of it.
+
+**Stealth patches:**
+- JavaScript injection before every page load patches `navigator.webdriver`, fake browser plugins, `chrome.runtime`, and removes Playwright fingerprints
+- Fixed User-Agent mismatch (was `aarch64`, now matches the actual Chromium binary)
+- Cookie persistence between sessions so Google sees a returning browser, not a fresh bot
+- Human-like random delays between page interactions
+- Clear error messages when rate-limited instead of cryptic timeouts
+
+**Neural net CAPTCHA solver (MobileNetV2):**
+- When Google serves a reCAPTCHA image challenge ("Select all images with traffic lights"), the server now attempts to solve it automatically
+- Uses MobileNetV2 (ImageNet classifier, ~13MB ONNX model, auto-downloads on first encounter)
+- Splits the CAPTCHA grid into cells, classifies each cell, clicks matching ones
+- Covers 22 common CAPTCHA categories: traffic lights, buses, bicycles, motorcycles, cars, bridges, boats, trains, trucks, fire hydrants, parking meters, tractors, and more
+- Human-like mouse movement for clicking cells and the verify button
+- Falls back gracefully if the challenge type isn't supported
+
+Will it solve every CAPTCHA? No. But it'll get through some of them, and honestly we mostly built it because we could.
+
+---
+
 ## What's New in v0.3.0 — 16 New Tools
 
 ## YouTube RAG — Subscribe, Transcribe, Search, Clip
