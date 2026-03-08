@@ -26,10 +26,10 @@ Google started catching headless Chromium browsers and serving CAPTCHAs instead 
 - Human-like random delays between page interactions
 - Clear error messages when rate-limited instead of cryptic timeouts
 
-**Neural net CAPTCHA solver (MobileNetV2):**
+**Neural net CAPTCHA solver (MobileNetV2 + OpenCV):**
 - When Google serves a reCAPTCHA image challenge ("Select all images with traffic lights"), the server now attempts to solve it automatically
 - Uses MobileNetV2 (ImageNet classifier, ~13MB ONNX model, auto-downloads on first encounter)
-- Splits the CAPTCHA grid into cells, classifies each cell, clicks matching ones
+- OpenCV splits the CAPTCHA grid into cells, each cell is classified by the neural net and matched against the prompt
 - Covers 22 common CAPTCHA categories: traffic lights, buses, bicycles, motorcycles, cars, bridges, boats, trains, trucks, fire hydrants, parking meters, tractors, and more
 - Human-like mouse movement for clicking cells and the verify button
 - Falls back gracefully if the challenge type isn't supported
